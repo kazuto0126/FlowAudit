@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# 執行結果：第一次執行會自動產生，只保留評估結果（evaluation.json）
+outputs/*
+!outputs/tw_sim/
+outputs/tw_sim/*
+!outputs/tw_sim/evaluation.json
+
+# 外部驗證用的第二份仿真資料（執行時自動產生）
+data/raw/tw_sim_seed2/
+
+# 金鑰與個人設定：絕對不要上傳
+.env
+*.key
+
+# 系統檔
+.DS_Store
+Thumbs.db
+desktop.ini
