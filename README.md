@@ -117,10 +117,16 @@ pytest -q                             # 執行測試
 |---|---|---|
 | **台灣情境仿真資料**（預設，已內附） | 新台幣、交易時間、管道、登入裝置、開戶日、休眠天數；20 個詐騙集團（假投資、網購、解除分期、循環交易）與大量容易誤判的正常帳戶。設計依據見 [docs/仿真設計與參數依據.md](docs/仿真設計與參數依據.md) | 預設 |
 | **IBM AMLSim 樣本**（已內附） | IBM 開源反洗錢模擬器的 20K 帳戶樣本，Apache-2.0 授權，見 `data/raw/AMLSim_LICENSE.txt` | 儀表板左側切換；`python -m flowaudit.pipeline --dataset amlsim_fanin_cycle` |
-| **IBM AMLworld**（需自行下載） | Kaggle「IBM Transactions for Anti Money Laundering」，如 `HI-Small_Trans.csv` | `python -m flowaudit.pipeline --amlworld HI-Small_Trans.csv` |
+| **IBM AMLworld**（需自行下載） | Kaggle「IBM Transactions for Anti Money Laundering」，如 `HI-Small_Trans.csv`，放在 `data/raw/`（已被 .gitignore 排除） | `python -m flowaudit.pipeline --amlworld data/raw/HI-Small_Trans.csv`（可加 `--nrows 1000000` 先試跑） |
 | 任意 CSV | 需含 `src, dst, amount` 以及 `step` 或 `date`；可選 `channel`、`device_id`，現金存提的對手填 `CASH` | 儀表板「上傳新資料全查」 |
 
 `data/demo_upload/` 內附一份示範用交易檔，可在上傳頁面現場展示全查流程。
+
+**大資料效能參考**（以與 AMLworld 同格式、隨機產生的資料測試；記憶體 7.3 GB 的筆電）：80 萬筆交易、35 萬個帳戶，
+全查＋特徵＋5 折訓練約 9 分鐘（規則 160 秒、特徵 258 秒、訓練 108 秒），記憶體峰值約 2.2 GB。
+完整 HI-Small（約 500 萬筆）建議使用 16 GB 以上記憶體的電腦。
+R4 資金循環搜尋只略過「不可能回到起點」的分支，結果與逐一搜尋相同；資料很大時找到 20,000 個循環即停止，
+循環次數只計入已找到的部分。
 
 ---
 

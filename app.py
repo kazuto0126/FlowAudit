@@ -850,6 +850,19 @@ def page_evaluation():
                     hide_index=True, use_container_width=True)
             st.caption("門檻越高名單越短、命中率越高，但太高會漏掉循環次數較少的集團。循環交易也可能是虛增營收等其他舞弊，"
                        "建議由稽核人員另案查核交易背後的商業實質。")
+            sys_ = fbs.get("tw_sim", next(iter(fbs.values()))).get("system")
+            if sys_ and sys_.get("rule_list_n"):
+                st.markdown(f"**系統預設的完整流程**（主要仿真資料；覆核名額 {sys_['ai_list_n'] + sys_['rule_list_n']} 個，"
+                            f"其中 {sys_['rule_quota']:.0%} 給規則名單；保底名單另案查核）")
+                st.dataframe(pd.DataFrame([
+                    {"名單": "AI 名單", "帳戶數": sys_["ai_list_n"], "其中人頭": sys_["ai_list_mules"], "其中循環交易": sys_["ai_list_cycle"]},
+                    {"名單": "規則名單（新手法保險）", "帳戶數": sys_["rule_list_n"], "其中人頭": sys_["rule_list_mules"],
+                     "其中循環交易": sys_["rule_list_cycle"]},
+                    {"名單": f"規則保底名單（循環 ≥ {sys_['min_cycles']} 次）", "帳戶數": sys_["fallback_n"],
+                     "其中人頭": sys_["fallback_mules"], "其中循環交易": sys_["fallback_cycle"]},
+                ]), hide_index=True, use_container_width=True)
+                st.caption(f"若同樣的覆核名額全部給 AI，可找到 {sys_['ai_only_mules']} 個人頭帳戶，但幾乎都不是循環交易；"
+                           "保留少量名額給規則，就能把 AI 學不到的循環交易帳戶納入覆核。")
 
 
 # ---------------------------------------------------------------------------
