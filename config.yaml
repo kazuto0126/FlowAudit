@@ -1,0 +1,76 @@
+# FlowAudit 金流偵探 — 參數設定
+# 稽核人員可依機構風險胃納調整下列門檻，不需修改程式碼。
+
+data:
+  default_dataset: tw_sim       # tw_sim（台灣情境仿真）| amlsim_fanin_cycle | amlsim_fanin | amlsim_cycle
+  base_date: "2025-01-01"      # AMLSim 資料的 step（日）對應到日曆日期，用於報告呈現
+  currency_label: "元"          # 報告中顯示的金額單位（原始資料未標示幣別）
+
+rules:
+  # R1 快進快出：資金流入後短時間內大比例轉出或提領（態樣 A15、A16、A17）
+  pass_through:
+    window_hours: 24            # 流入後觀察時數（只有日期的資料以「天」為單位換算）
+    min_ratio: 0.8              # 轉出金額 / 流入金額 門檻
+    min_events: 2               # 至少發生幾次
+    min_amount_share: 0.3       # 發生事件的流入金額占總流入的比例下限
+  # R2 集中匯入（態樣 A17）
+  fan_in:
+    window_days: 7
+    percentile: 95              # 依客群（個人／商家／公司）分別取第 95 百分位作為門檻
+    min_count: 8
+  # R3 分散匯出（態樣 A18）
+  fan_out:
+    window_days: 7
+    percentile: 95
+    min_count: 8
+  # R4 資金循環：依時間先後、金額相近地回流原帳戶（態樣 A18）
+  cycle:
+    max_length: 5
+    max_span_days: 30
+    amount_ratio: [0.5, 1.2]    # 下一手金額須為上一手的 0.5～1.2 倍（同一筆錢在流轉）
+    min_amount: 0
+    min_cycles: 1
+  # R5 休眠／新戶突然活躍（態樣 A15、A16；管理辦法第 4 條）
+  dormant_new:
+    new_account_days: 90        # 開戶 90 天內視為新戶
+    dormant_days: 180           # 180 天以上未往來視為休眠
+    window_days: 14             # 開始使用後觀察天數
+    min_inflow: 50000           # 觀察期間流入金額下限（元）
+    min_out_ratio: 0.7          # 觀察期間轉出／流入比下限
+    spike_min_weekly_tx: 10     # 無開戶資料時的替代規則：單週交易筆數下限
+    spike_ratio: 4.0            #                         為週平均的倍數
+  # R6 密集現金提領（態樣 A11、A12）
+  cash:
+    window_hours: 24
+    min_count: 3
+    min_amount: 50000
+  # R7 多帳戶共用裝置且轉入相同受款帳號（態樣 A1G）
+  device:
+    min_accounts: 3
+  # R8 小額測試交易（管理辦法第 4 條）
+  tiny:
+    max_amount: 30
+    window_hours: 72
+    min_count: 3
+
+model:
+  hybrid_weight_ai: 0.7         # 雙層分數中 AI 的權重（其餘為規則）
+  train_label: alerted          # alerted：只用「已被通報警示」的帳戶訓練（貼近實務）；label：用全部標籤
+  n_folds: 5
+  random_state: 42
+  xgb:
+    n_estimators: 800
+    max_depth: 3
+    learning_rate: 0.05
+    scale_pos_weight: sqrt      # sqrt（建議）| balanced | 數字
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 2
+
+report:
+  top_k_review: 200             # 每月交由稽核人員複核的高風險帳戶數
+  llm:
+    provider: auto              # auto | anthropic | openai | template
+    anthropic_model: "claude-sonnet-4-5"   # 可用環境變數 FLOWAUDIT_ANTHROPIC_MODEL 覆寫
+    openai_model: "gpt-4o-mini"            # 可用環境變數 FLOWAUDIT_OPENAI_MODEL 覆寫
+    timeout_sec: 60

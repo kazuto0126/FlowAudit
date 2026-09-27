@@ -1,0 +1,1045 @@
+{
+  "dataset": "tw_sim",
+  "n_accounts": 17773,
+  "n_true_positive": 243,
+  "n_train_positive": 215,
+  "group_cv": true,
+  "models": {
+    "現行規則計分": {
+      "pr_auc": 0.6279968365487981,
+      "pr_auc_ci": [
+        0.5680271239232086,
+        0.687220668498631
+      ],
+      "pr_auc_fold_std": 0.06615258131218102,
+      "roc_auc": 0.940459975726503,
+      "at_k": [
+        {
+          "k": 100,
+          "hits": 86,
+          "precision": 0.86,
+          "recall": 0.35390946502057613
+        },
+        {
+          "k": 200,
+          "hits": 131,
+          "precision": 0.655,
+          "recall": 0.5390946502057613
+        },
+        {
+          "k": 243,
+          "hits": 131,
+          "precision": 0.5390946502057613,
+          "recall": 0.5390946502057613
+        }
+      ]
+    },
+    "孤立森林（非監督）": {
+      "pr_auc": 0.2738253595227036,
+      "pr_auc_ci": [
+        0.238155171216954,
+        0.31234047406178805
+      ],
+      "pr_auc_fold_std": 0.045590547701523876,
+      "roc_auc": 0.9648165754649877,
+      "at_k": [
+        {
+          "k": 100,
+          "hits": 3,
+          "precision": 0.03,
+          "recall": 0.012345679012345678
+        },
+        {
+          "k": 200,
+          "hits": 41,
+          "precision": 0.205,
+          "recall": 0.16872427983539096
+        },
+        {
+          "k": 243,
+          "hits": 84,
+          "precision": 0.345679012345679,
+          "recall": 0.345679012345679
+        }
+      ]
+    },
+    "邏輯斯迴歸": {
+      "pr_auc": 0.9059175670960949,
+      "pr_auc_ci": [
+        0.8576520456838926,
+        0.949794561161704
+      ],
+      "pr_auc_fold_std": 0.04521509222609942,
+      "roc_auc": 0.9888928796959475,
+      "at_k": [
+        {
+          "k": 100,
+          "hits": 98,
+          "precision": 0.98,
+          "recall": 0.40329218106995884
+        },
+        {
+          "k": 200,
+          "hits": 195,
+          "precision": 0.975,
+          "recall": 0.8024691358024691
+        },
+        {
+          "k": 243,
+          "hits": 218,
+          "precision": 0.897119341563786,
+          "recall": 0.897119341563786
+        }
+      ]
+    },
+    "隨機森林": {
+      "pr_auc": 0.99011184941284,
+      "pr_auc_ci": [
+        0.9829967818518318,
+        0.9956040265252595
+      ],
+      "pr_auc_fold_std": 0.004747834192803421,
+      "roc_auc": 0.999786609199045,
+      "at_k": [
+        {
+          "k": 100,
+          "hits": 100,
+          "precision": 1.0,
+          "recall": 0.411522633744856
+        },
+        {
+          "k": 200,
+          "hits": 200,
+          "precision": 1.0,
+          "recall": 0.823045267489712
+        },
+        {
+          "k": 243,
+          "hits": 229,
+          "precision": 0.9423868312757202,
+          "recall": 0.9423868312757202
+        }
+      ]
+    },
+    "XGBoost（FlowAudit）": {
+      "pr_auc": 0.9820159048676854,
+      "pr_auc_ci": [
+        0.9699919871222098,
+        0.9914273930436754
+      ],
+      "pr_auc_fold_std": 0.009272681744257676,
+      "roc_auc": 0.999370156744816,
+      "at_k": [
+        {
+          "k": 100,
+          "hits": 100,
+          "precision": 1.0,
+          "recall": 0.411522633744856
+        },
+        {
+          "k": 200,
+          "hits": 200,
+          "precision": 1.0,
+          "recall": 0.823045267489712
+        },
+        {
+          "k": 243,
+          "hits": 229,
+          "precision": 0.9423868312757202,
+          "recall": 0.9423868312757202
+        }
+      ]
+    },
+    "雙層：規則＋XGBoost（70%／30%）": {
+      "pr_auc": 0.9074114337288508,
+      "pr_auc_ci": [
+        0.8716817771935482,
+        0.9363185371101463
+      ],
+      "pr_auc_fold_std": 0.025991979313261696,
+      "roc_auc": 0.9943728446707467,
+      "at_k": [
+        {
+          "k": 100,
+          "hits": 100,
+          "precision": 1.0,
+          "recall": 0.411522633744856
+        },
+        {
+          "k": 200,
+          "hits": 186,
+          "precision": 0.93,
+          "recall": 0.7654320987654321
+        },
+        {
+          "k": 243,
+          "hits": 206,
+          "precision": 0.8477366255144033,
+          "recall": 0.8477366255144033
+        }
+      ]
+    }
+  },
+  "ablation": {
+    "全部特徵": {
+      "pr_auc": 0.9824188013120617,
+      "n_features": 57
+    },
+    "交易行為": {
+      "n_features": 17,
+      "without": 0.9816451229090657,
+      "only": 0.9501486115280904,
+      "drop": 0.0007736784029960253
+    },
+    "資金流速": {
+      "n_features": 5,
+      "without": 0.9834566052181962,
+      "only": 0.7879069729574603,
+      "drop": -0.0010378039061345046
+    },
+    "時間與管道": {
+      "n_features": 9,
+      "without": 0.9820339755499884,
+      "only": 0.8059992757898249,
+      "drop": 0.0003848257620733264
+    },
+    "資金網路圖": {
+      "n_features": 14,
+      "without": 0.9825799418479226,
+      "only": 0.9309745220441038,
+      "drop": -0.00016114053586091526
+    },
+    "帳戶屬性與裝置": {
+      "n_features": 11,
+      "without": 0.9671676783993366,
+      "only": 0.8894274634289329,
+      "drop": 0.015251122912725124
+    },
+    "規則命中數": {
+      "n_features": 1,
+      "without": 0.9834573780513923,
+      "only": 0.4368444238918088,
+      "drop": -0.00103857673933061
+    }
+  },
+  "temporal": {
+    "batches": [
+      {
+        "batch": "2026-02-01",
+        "n_accounts": 15472,
+        "n_known_alerts": 7,
+        "hidden_mules": 64,
+        "mode": "AI",
+        "by_k": {
+          "50": {
+            "ai": {
+              "tp": 5,
+              "precision": 0.1,
+              "hidden_available": 64,
+              "caught_before_alert": 3,
+              "lead_days_sum": 100.0,
+              "never_alerted": 2,
+              "prevented_amount": 1090000.0
+            },
+            "rules": {
+              "tp": 5,
+              "precision": 0.1,
+              "hidden_available": 64,
+              "caught_before_alert": 3,
+              "lead_days_sum": 162.0,
+              "never_alerted": 2,
+              "prevented_amount": 0.0
+            },
+            "hybrid": {
+              "tp": 6,
+              "precision": 0.12,
+              "hidden_available": 64,
+              "caught_before_alert": 3,
+              "lead_days_sum": 100.0,
+              "never_alerted": 3,
+              "prevented_amount": 430000.0
+            },
+            "random": {
+              "tp": 0.20691884901390237
+            }
+          },
+          "100": {
+            "ai": {
+              "tp": 7,
+              "precision": 0.07,
+              "hidden_available": 64,
+              "caught_before_alert": 4,
+              "lead_days_sum": 113.0,
+              "never_alerted": 3,
+              "prevented_amount": 1520000.0
+            },
+            "rules": {
+              "tp": 5,
+              "precision": 0.05,
+              "hidden_available": 64,
+              "caught_before_alert": 3,
+              "lead_days_sum": 162.0,
+              "never_alerted": 2,
+              "prevented_amount": 0.0
+            },
+            "hybrid": {
+              "tp": 8,
+              "precision": 0.08,
+              "hidden_available": 64,
+              "caught_before_alert": 4,
+              "lead_days_sum": 175.0,
+              "never_alerted": 4,
+              "prevented_amount": 430000.0
+            },
+            "random": {
+              "tp": 0.41383769802780473
+            }
+          },
+          "200": {
+            "ai": {
+              "tp": 8,
+              "precision": 0.04,
+              "hidden_available": 64,
+              "caught_before_alert": 4,
+              "lead_days_sum": 113.0,
+              "never_alerted": 4,
+              "prevented_amount": 1520000.0
+            },
+            "rules": {
+              "tp": 6,
+              "precision": 0.03,
+              "hidden_available": 64,
+              "caught_before_alert": 4,
+              "lead_days_sum": 175.0,
+              "never_alerted": 2,
+              "prevented_amount": 430000.0
+            },
+            "hybrid": {
+              "tp": 9,
+              "precision": 0.045,
+              "hidden_available": 64,
+              "caught_before_alert": 4,
+              "lead_days_sum": 175.0,
+              "never_alerted": 5,
+              "prevented_amount": 430000.0
+            },
+            "random": {
+              "tp": 0.8276753960556095
+            }
+          }
+        }
+      },
+      {
+        "batch": "2026-03-01",
+        "n_accounts": 16170,
+        "n_known_alerts": 32,
+        "hidden_mules": 82,
+        "mode": "AI",
+        "by_k": {
+          "50": {
+            "ai": {
+              "tp": 19,
+              "precision": 0.38,
+              "hidden_available": 78,
+              "caught_before_alert": 12,
+              "lead_days_sum": 231.0,
+              "never_alerted": 7,
+              "prevented_amount": 3392010.0
+            },
+            "rules": {
+              "tp": 16,
+              "precision": 0.32,
+              "hidden_available": 77,
+              "caught_before_alert": 7,
+              "lead_days_sum": 122.0,
+              "never_alerted": 9,
+              "prevented_amount": 30000.0
+            },
+            "hybrid": {
+              "tp": 22,
+              "precision": 0.44,
+              "hidden_available": 77,
+              "caught_before_alert": 12,
+              "lead_days_sum": 297.0,
+              "never_alerted": 10,
+              "prevented_amount": 1641580.0
+            },
+            "random": {
+              "tp": 0.2540587433387037
+            }
+          },
+          "100": {
+            "ai": {
+              "tp": 23,
+              "precision": 0.23,
+              "hidden_available": 77,
+              "caught_before_alert": 13,
+              "lead_days_sum": 264.0,
+              "never_alerted": 10,
+              "prevented_amount": 3392010.0
+            },
+            "rules": {
+              "tp": 21,
+              "precision": 0.21,
+              "hidden_available": 77,
+              "caught_before_alert": 9,
+              "lead_days_sum": 242.0,
+              "never_alerted": 12,
+              "prevented_amount": 1610000.0
+            },
+            "hybrid": {
+              "tp": 26,
+              "precision": 0.26,
+              "hidden_available": 75,
+              "caught_before_alert": 12,
+              "lead_days_sum": 261.0,
+              "never_alerted": 14,
+              "prevented_amount": 3291580.0
+            },
+            "random": {
+              "tp": 0.5081174866774074
+            }
+          },
+          "200": {
+            "ai": {
+              "tp": 25,
+              "precision": 0.125,
+              "hidden_available": 76,
+              "caught_before_alert": 14,
+              "lead_days_sum": 276.0,
+              "never_alerted": 11,
+              "prevented_amount": 3426190.0
+            },
+            "rules": {
+              "tp": 21,
+              "precision": 0.105,
+              "hidden_available": 77,
+              "caught_before_alert": 9,
+              "lead_days_sum": 242.0,
+              "never_alerted": 12,
+              "prevented_amount": 1610000.0
+            },
+            "hybrid": {
+              "tp": 28,
+              "precision": 0.14,
+              "hidden_available": 74,
+              "caught_before_alert": 14,
+              "lead_days_sum": 316.0,
+              "never_alerted": 14,
+              "prevented_amount": 3711580.0
+            },
+            "random": {
+              "tp": 1.0162349733548148
+            }
+          }
+        }
+      },
+      {
+        "batch": "2026-04-01",
+        "n_accounts": 16764,
+        "n_known_alerts": 89,
+        "hidden_mules": 85,
+        "mode": "AI",
+        "by_k": {
+          "50": {
+            "ai": {
+              "tp": 30,
+              "precision": 0.6,
+              "hidden_available": 74,
+              "caught_before_alert": 23,
+              "lead_days_sum": 355.0,
+              "never_alerted": 7,
+              "prevented_amount": 7134880.0
+            },
+            "rules": {
+              "tp": 19,
+              "precision": 0.38,
+              "hidden_available": 71,
+              "caught_before_alert": 8,
+              "lead_days_sum": 199.0,
+              "never_alerted": 11,
+              "prevented_amount": 460000.0
+            },
+            "hybrid": {
+              "tp": 27,
+              "precision": 0.54,
+              "hidden_available": 68,
+              "caught_before_alert": 19,
+              "lead_days_sum": 260.0,
+              "never_alerted": 8,
+              "prevented_amount": 7074430.0
+            },
+            "random": {
+              "tp": 0.25487256371814093
+            }
+          },
+          "100": {
+            "ai": {
+              "tp": 38,
+              "precision": 0.38,
+              "hidden_available": 69,
+              "caught_before_alert": 30,
+              "lead_days_sum": 644.0,
+              "never_alerted": 8,
+              "prevented_amount": 8311042.0
+            },
+            "rules": {
+              "tp": 21,
+              "precision": 0.21,
+              "hidden_available": 67,
+              "caught_before_alert": 13,
+              "lead_days_sum": 181.0,
+              "never_alerted": 8,
+              "prevented_amount": 4114430.0
+            },
+            "hybrid": {
+              "tp": 27,
+              "precision": 0.27,
+              "hidden_available": 63,
+              "caught_before_alert": 22,
+              "lead_days_sum": 411.0,
+              "never_alerted": 5,
+              "prevented_amount": 7074430.0
+            },
+            "random": {
+              "tp": 0.5097451274362819
+            }
+          },
+          "200": {
+            "ai": {
+              "tp": 40,
+              "precision": 0.2,
+              "hidden_available": 67,
+              "caught_before_alert": 33,
+              "lead_days_sum": 763.0,
+              "never_alerted": 7,
+              "prevented_amount": 8864052.0
+            },
+            "rules": {
+              "tp": 23,
+              "precision": 0.115,
+              "hidden_available": 67,
+              "caught_before_alert": 15,
+              "lead_days_sum": 217.0,
+              "never_alerted": 8,
+              "prevented_amount": 4114430.0
+            },
+            "hybrid": {
+              "tp": 28,
+              "precision": 0.14,
+              "hidden_available": 61,
+              "caught_before_alert": 22,
+              "lead_days_sum": 419.0,
+              "never_alerted": 6,
+              "prevented_amount": 7074430.0
+            },
+            "random": {
+              "tp": 1.0194902548725637
+            }
+          }
+        }
+      },
+      {
+        "batch": "2026-05-01",
+        "n_accounts": 17232,
+        "n_known_alerts": 152,
+        "hidden_mules": 60,
+        "mode": "AI",
+        "by_k": {
+          "50": {
+            "ai": {
+              "tp": 19,
+              "precision": 0.38,
+              "hidden_available": 37,
+              "caught_before_alert": 15,
+              "lead_days_sum": 255.0,
+              "never_alerted": 4,
+              "prevented_amount": 2550000.0
+            },
+            "rules": {
+              "tp": 9,
+              "precision": 0.18,
+              "hidden_available": 34,
+              "caught_before_alert": 8,
+              "lead_days_sum": 167.0,
+              "never_alerted": 1,
+              "prevented_amount": 180000.0
+            },
+            "hybrid": {
+              "tp": 16,
+              "precision": 0.32,
+              "hidden_available": 33,
+              "caught_before_alert": 12,
+              "lead_days_sum": 266.0,
+              "never_alerted": 4,
+              "prevented_amount": 1660000.0
+            },
+            "random": {
+              "tp": 0.1756440281030445
+            }
+          },
+          "100": {
+            "ai": {
+              "tp": 17,
+              "precision": 0.17,
+              "hidden_available": 27,
+              "caught_before_alert": 15,
+              "lead_days_sum": 306.0,
+              "never_alerted": 2,
+              "prevented_amount": 2934241.0
+            },
+            "rules": {
+              "tp": 9,
+              "precision": 0.09,
+              "hidden_available": 34,
+              "caught_before_alert": 8,
+              "lead_days_sum": 167.0,
+              "never_alerted": 1,
+              "prevented_amount": 180000.0
+            },
+            "hybrid": {
+              "tp": 14,
+              "precision": 0.14,
+              "hidden_available": 29,
+              "caught_before_alert": 11,
+              "lead_days_sum": 208.0,
+              "never_alerted": 3,
+              "prevented_amount": 1660000.0
+            },
+            "random": {
+              "tp": 0.351288056206089
+            }
+          },
+          "200": {
+            "ai": {
+              "tp": 18,
+              "precision": 0.09,
+              "hidden_available": 24,
+              "caught_before_alert": 16,
+              "lead_days_sum": 335.0,
+              "never_alerted": 2,
+              "prevented_amount": 3094202.0
+            },
+            "rules": {
+              "tp": 12,
+              "precision": 0.06,
+              "hidden_available": 33,
+              "caught_before_alert": 11,
+              "lead_days_sum": 261.0,
+              "never_alerted": 1,
+              "prevented_amount": 1660000.0
+            },
+            "hybrid": {
+              "tp": 15,
+              "precision": 0.075,
+              "hidden_available": 27,
+              "caught_before_alert": 14,
+              "lead_days_sum": 224.0,
+              "never_alerted": 1,
+              "prevented_amount": 2550000.0
+            },
+            "random": {
+              "tp": 0.702576112412178
+            }
+          }
+        }
+      },
+      {
+        "batch": "2026-06-01",
+        "n_accounts": 17616,
+        "n_known_alerts": 193,
+        "hidden_mules": 45,
+        "mode": "AI",
+        "by_k": {
+          "50": {
+            "ai": {
+              "tp": 12,
+              "precision": 0.24,
+              "hidden_available": 20,
+              "caught_before_alert": 10,
+              "lead_days_sum": 119.0,
+              "never_alerted": 2,
+              "prevented_amount": 571940.0
+            },
+            "rules": {
+              "tp": 6,
+              "precision": 0.12,
+              "hidden_available": 18,
+              "caught_before_alert": 6,
+              "lead_days_sum": 96.0,
+              "never_alerted": 0,
+              "prevented_amount": 440000.0
+            },
+            "hybrid": {
+              "tp": 9,
+              "precision": 0.18,
+              "hidden_available": 15,
+              "caught_before_alert": 8,
+              "lead_days_sum": 113.0,
+              "never_alerted": 1,
+              "prevented_amount": 510000.0
+            },
+            "random": {
+              "tp": 0.12913964300063135
+            }
+          },
+          "100": {
+            "ai": {
+              "tp": 12,
+              "precision": 0.12,
+              "hidden_available": 15,
+              "caught_before_alert": 9,
+              "lead_days_sum": 115.0,
+              "never_alerted": 3,
+              "prevented_amount": 510000.0
+            },
+            "rules": {
+              "tp": 6,
+              "precision": 0.06,
+              "hidden_available": 18,
+              "caught_before_alert": 6,
+              "lead_days_sum": 96.0,
+              "never_alerted": 0,
+              "prevented_amount": 440000.0
+            },
+            "hybrid": {
+              "tp": 10,
+              "precision": 0.1,
+              "hidden_available": 14,
+              "caught_before_alert": 9,
+              "lead_days_sum": 115.0,
+              "never_alerted": 1,
+              "prevented_amount": 510000.0
+            },
+            "random": {
+              "tp": 0.2582792860012627
+            }
+          },
+          "200": {
+            "ai": {
+              "tp": 13,
+              "precision": 0.065,
+              "hidden_available": 14,
+              "caught_before_alert": 10,
+              "lead_days_sum": 120.0,
+              "never_alerted": 3,
+              "prevented_amount": 510000.0
+            },
+            "rules": {
+              "tp": 6,
+              "precision": 0.03,
+              "hidden_available": 17,
+              "caught_before_alert": 6,
+              "lead_days_sum": 82.0,
+              "never_alerted": 0,
+              "prevented_amount": 440000.0
+            },
+            "hybrid": {
+              "tp": 10,
+              "precision": 0.05,
+              "hidden_available": 14,
+              "caught_before_alert": 9,
+              "lead_days_sum": 115.0,
+              "never_alerted": 1,
+              "prevented_amount": 510000.0
+            },
+            "random": {
+              "tp": 0.5165585720025254
+            }
+          }
+        }
+      },
+      {
+        "batch": "2026-07-01",
+        "n_accounts": 17773,
+        "n_known_alerts": 215,
+        "hidden_mules": 28,
+        "mode": "AI",
+        "by_k": {
+          "50": {
+            "ai": {
+              "tp": 0,
+              "precision": 0.0,
+              "hidden_available": 6,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 0,
+              "prevented_amount": 0.0
+            },
+            "rules": {
+              "tp": 0,
+              "precision": 0.0,
+              "hidden_available": 5,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 0,
+              "prevented_amount": 0.0
+            },
+            "hybrid": {
+              "tp": 1,
+              "precision": 0.02,
+              "hidden_available": 2,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 1,
+              "prevented_amount": 0.0
+            },
+            "random": {
+              "tp": 0.07973573299920264
+            }
+          },
+          "100": {
+            "ai": {
+              "tp": 0,
+              "precision": 0.0,
+              "hidden_available": 2,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 0,
+              "prevented_amount": 0.0
+            },
+            "rules": {
+              "tp": 0,
+              "precision": 0.0,
+              "hidden_available": 5,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 0,
+              "prevented_amount": 0.0
+            },
+            "hybrid": {
+              "tp": 0,
+              "precision": 0.0,
+              "hidden_available": 1,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 0,
+              "prevented_amount": 0.0
+            },
+            "random": {
+              "tp": 0.15947146599840528
+            }
+          },
+          "200": {
+            "ai": {
+              "tp": 0,
+              "precision": 0.0,
+              "hidden_available": 1,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 0,
+              "prevented_amount": 0.0
+            },
+            "rules": {
+              "tp": 0,
+              "precision": 0.0,
+              "hidden_available": 5,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 0,
+              "prevented_amount": 0.0
+            },
+            "hybrid": {
+              "tp": 0,
+              "precision": 0.0,
+              "hidden_available": 1,
+              "caught_before_alert": 0,
+              "lead_days_sum": 0.0,
+              "never_alerted": 0,
+              "prevented_amount": 0.0
+            },
+            "random": {
+              "tp": 0.31894293199681056
+            }
+          }
+        }
+      }
+    ],
+    "summary": {
+      "50": {
+        "reviews": 300,
+        "ai": {
+          "unique_mules": 85,
+          "precision": 0.2833333333333333,
+          "caught_before_alert": 63,
+          "lead_days_mean": 16.825396825396826,
+          "never_alerted": 22,
+          "prevented_amount": 14738830.0
+        },
+        "rules": {
+          "unique_mules": 55,
+          "precision": 0.18333333333333332,
+          "caught_before_alert": 32,
+          "lead_days_mean": 23.3125,
+          "never_alerted": 23,
+          "prevented_amount": 1110000.0
+        },
+        "hybrid": {
+          "unique_mules": 81,
+          "precision": 0.27,
+          "caught_before_alert": 54,
+          "lead_days_mean": 19.185185185185187,
+          "never_alerted": 27,
+          "prevented_amount": 11316010.0
+        },
+        "random": {
+          "unique_mules": 1.1003695601736254
+        }
+      },
+      "100": {
+        "reviews": 600,
+        "ai": {
+          "unique_mules": 97,
+          "precision": 0.16166666666666665,
+          "caught_before_alert": 71,
+          "lead_days_mean": 20.309859154929576,
+          "never_alerted": 26,
+          "prevented_amount": 16667293.0
+        },
+        "rules": {
+          "unique_mules": 62,
+          "precision": 0.10333333333333333,
+          "caught_before_alert": 39,
+          "lead_days_mean": 21.743589743589745,
+          "never_alerted": 23,
+          "prevented_amount": 6344430.0
+        },
+        "hybrid": {
+          "unique_mules": 85,
+          "precision": 0.14166666666666666,
+          "caught_before_alert": 58,
+          "lead_days_mean": 20.17241379310345,
+          "never_alerted": 27,
+          "prevented_amount": 12966010.0
+        },
+        "random": {
+          "unique_mules": 2.200739120347251
+        }
+      },
+      "200": {
+        "reviews": 1200,
+        "ai": {
+          "unique_mules": 104,
+          "precision": 0.08666666666666667,
+          "caught_before_alert": 77,
+          "lead_days_mean": 20.87012987012987,
+          "never_alerted": 27,
+          "prevented_amount": 17414444.0
+        },
+        "rules": {
+          "unique_mules": 68,
+          "precision": 0.056666666666666664,
+          "caught_before_alert": 45,
+          "lead_days_mean": 21.711111111111112,
+          "never_alerted": 23,
+          "prevented_amount": 8254430.0
+        },
+        "hybrid": {
+          "unique_mules": 90,
+          "precision": 0.075,
+          "caught_before_alert": 63,
+          "lead_days_mean": 19.825396825396826,
+          "never_alerted": 27,
+          "prevented_amount": 14276010.0
+        },
+        "random": {
+          "unique_mules": 4.401478240694502
+        }
+      },
+      "total_mules": 243,
+      "victim_amount_total": 94196576.0
+    }
+  },
+  "errors": {
+    "k": 243,
+    "fp_by_role": {
+      "學生": 5,
+      "代收帳戶": 4,
+      "第二帳戶": 4,
+      "退休人士": 1
+    },
+    "fn_by_scheme": {
+      "循環交易": 12,
+      "假投資": 1,
+      "網購詐騙": 1
+    },
+    "fn_by_source": {
+      "休眠帳戶": 7,
+      "新開戶": 4,
+      "出售帳戶": 3
+    },
+    "fn_by_layer": {
+      "3": 12,
+      "1": 2
+    },
+    "recall_by_scheme": {
+      "假投資": 0.9897959183673469,
+      "循環交易": 0.29411764705882354,
+      "網購詐騙": 0.9893617021276596,
+      "解除分期": 1.0
+    },
+    "fp_rate_by_role": {
+      "上班族": {
+        "n": 7200,
+        "rules": 0.2590277777777778,
+        "ai": 0.0
+      },
+      "代收帳戶": {
+        "n": 76,
+        "rules": 1.0,
+        "ai": 0.05263157894736842
+      },
+      "供應商": {
+        "n": 50,
+        "rules": 0.96,
+        "ai": 0.0
+      },
+      "個人賣家": {
+        "n": 350,
+        "rules": 0.8371428571428572,
+        "ai": 0.0
+      },
+      "商家": {
+        "n": 600,
+        "rules": 0.08,
+        "ai": 0.0
+      },
+      "團購主": {
+        "n": 120,
+        "rules": 1.0,
+        "ai": 0.0
+      },
+      "學生": {
+        "n": 2000,
+        "rules": 0.252,
+        "ai": 0.0025
+      },
+      "房東": {
+        "n": 250,
+        "rules": 0.96,
+        "ai": 0.0
+      },
+      "第二帳戶": {
+        "n": 3972,
+        "rules": 0.09919436052366566,
+        "ai": 0.0010070493454179255
+      },
+      "自營業者": {
+        "n": 1000,
+        "rules": 0.112,
+        "ai": 0.0
+      },
+      "退休人士": {
+        "n": 1800,
+        "rules": 0.11055555555555556,
+        "ai": 0.0005555555555555556
+      },
+      "雇主": {
+        "n": 100,
+        "rules": 0.99,
+        "ai": 0.0
+      }
+    }
+  },
+  "elapsed_sec": 255.2
+}
