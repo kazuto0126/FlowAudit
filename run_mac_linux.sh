@@ -7,5 +7,6 @@ if [ ! -f outputs/tw_sim/results.pkl ]; then
   echo "[FlowAudit] 第一次執行：訓練模型與全查（約 2~3 分鐘）..."
   python3 -m flowaudit.pipeline
 fi
-echo "[FlowAudit] 啟動儀表板：http://localhost:8501"
-python3 -m streamlit run app.py
+echo "[FlowAudit] 啟動儀表板，幾秒後瀏覽器會自動開啟 http://localhost:8501（按 Ctrl+C 結束）"
+( sleep 8; (command -v open >/dev/null && open http://localhost:8501) || xdg-open http://localhost:8501 ) >/dev/null 2>&1 &
+python3 -m streamlit run app.py --server.headless true --browser.gatherUsageStats false
