@@ -56,6 +56,9 @@ rules:
 model:
   hybrid_weight_ai: 0.7         # 雙層分數中 AI 的權重（其餘為規則）
   train_label: alerted          # alerted：只用「已被通報警示」的帳戶訓練（貼近實務）；label：用全部標籤
+  cold_start:                   # 冷啟動：自家警示資料還少時，先用外部參考資料（代表同業分享、已完成調查的資料）訓練的模型
+    reference: tw_sim_seed2     # 逐月模擬使用的參考資料；null 表示不使用
+    switch_after: 50            # 自家已知警示帳戶達此數量後，改用自家資料訓練的模型
   n_folds: 5
   random_state: 42
   xgb:
@@ -69,6 +72,8 @@ model:
 
 report:
   top_k_review: 200             # 每月交由稽核人員複核的高風險帳戶數
+  rule_quota: 0.1               # 覆核名額中保留給「規則分數高、但不在 AI 名單」帳戶的比例（新詐騙手法出現時的保險）
+  cycle_fallback_min: 5         # 規則保底名單：AI 名單外、參與資金循環達此次數的帳戶另列專案查核（循環交易少被通報，AI 難以學習）
   llm:
     provider: auto              # auto | anthropic | openai | template
     anthropic_model: "claude-sonnet-4-5"   # 可用環境變數 FLOWAUDIT_ANTHROPIC_MODEL 覆寫

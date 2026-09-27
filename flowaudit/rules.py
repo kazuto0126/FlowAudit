@@ -225,7 +225,8 @@ def rule_fan(tx, c: _Ctx, cfg, direction: str) -> pd.DataFrame:
 # R4 資金循環（時間先後一致、金額相近的短循環）
 # ---------------------------------------------------------------------------
 def find_temporal_cycles(tx: pd.DataFrame, max_len: int = 5, max_span: float = 30, max_cycles: int = 20000,
-                         amount_ratio: tuple[float, float] | None = None, min_amount: float = 0.0):
+                         amount_ratio: tuple[float, float] | None = None, min_amount: float = 0.0,
+                         reach2_cap: int = 200_000):
     """找出「依時間先後」資金流回原帳戶的循環。
 
     從每一筆交易 u→v(t0) 出發，只沿著時間 ≥ 前一筆、且 ≤ t0 + max_span 天的交易往下走；
@@ -236,19 +237,41 @@ def find_temporal_cycles(tx: pd.DataFrame, max_len: int = 5, max_span: float = 3
     span = max_span * 24 if t_col == "t_hours" else max_span
     sub = tx[(tx["src"] != tx["dst"]) & (tx["src"] != CASH) & (tx["dst"] != CASH) & (tx["amount"] >= min_amount)]
     out = defaultdict(list)
+    pred = defaultdict(set)       # 曾轉帳給該帳戶的帳戶
+    succ = defaultdict(set)       # 該帳戶曾轉帳給的帳戶
+    in_times = defaultdict(list)  # 該帳戶每筆流入的時間
     for u, v, s, a, i in zip(sub["src"].to_numpy(), sub["dst"].to_numpy(), sub[t_col].to_numpy(),
                              sub["amount"].to_numpy(dtype=float), sub["tx_id"].to_numpy()):
         out[u].append((float(s), v, float(a), int(i)))
+        pred[v].add(u)
+        succ[u].add(v)
+        in_times[v].append(float(s))
     times = {}
     for u in out:
         out[u].sort()
         times[u] = [e[0] for e in out[u]]
+    for v in in_times:
+        in_times[v].sort()
     lo_r, hi_r = amount_ratio if amount_ratio else (0.0, np.inf)
 
+    # 以下剪枝只略過「不可能回到起點」的搜尋分支，找到的循環與順序和逐一搜尋完全相同，大資料時快很多：
+    # 1. 起點帳戶在時間視窗內沒有任何流入，就不可能回到起點；
+    # 2. 下一個帳戶還剩 k 步可走時，必須能在 k 步內走回起點（k = 1、2、3；只看有沒有轉帳關係）。
+    #    「2 步內能走回起點」的帳戶集合太大時不建立，只影響速度、不影響結果。
+    empty = frozenset()
     found, seen = [], set()
     for u in list(out.keys()):
+        if u not in pred:
+            continue
+        pu, itu = pred[u], in_times[u]
+        reach2 = None  # 2 步內能走回 u 的帳戶（第一次用到時才建立）
         for s0, v0, a0, t0 in out[u]:
             limit = s0 + span
+            if bisect_right(itu, limit) == bisect_left(itu, s0):
+                continue
+            if reach2 is None:
+                size = len(pu) + sum(len(pred[p]) for p in pu if p in pred)
+                reach2 = pu.union(*(pred[p] for p in pu if p in pred)) if size <= reach2_cap else False
             stack = [(v0, s0, a0, (u, v0), (t0,))]
             done = False
             while stack and not done:
@@ -257,6 +280,7 @@ def find_temporal_cycles(tx: pd.DataFrame, max_len: int = 5, max_span: float = 3
                     continue
                 lo = bisect_left(times[x], t)
                 hi = bisect_right(times[x], limit)
+                steps_left = max_len - len(path)  # 下一個帳戶最多還能走幾步回到起點
                 for s, y, amt, tid in out[x][lo:hi]:
                     if not (lo_r * a <= amt <= hi_r * a):
                         continue
@@ -267,8 +291,15 @@ def find_temporal_cycles(tx: pd.DataFrame, max_len: int = 5, max_span: float = 3
                             found.append((list(path), list(txs) + [tid]))
                         done = True
                         break
-                    if len(path) < max_len and y not in path:
-                        stack.append((y, s, amt, path + (y,), txs + (tid,)))
+                    if steps_left <= 0 or y in path:
+                        continue
+                    if steps_left == 1 and y not in pu:
+                        continue
+                    if steps_left == 2 and y not in pu and (y not in reach2 if reach2 else succ.get(y, empty).isdisjoint(pu)):
+                        continue
+                    if steps_left == 3 and reach2 and y not in pu and succ.get(y, empty).isdisjoint(reach2):
+                        continue
+                    stack.append((y, s, amt, path + (y,), txs + (tid,)))
             if len(found) >= max_cycles:
                 return found
     return found

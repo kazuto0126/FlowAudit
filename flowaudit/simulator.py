@@ -67,6 +67,13 @@ DEFAULT_CFG = {
     "fraud_groups": {"假投資": 7, "網購詐騙": 6, "解除分期": 4, "循環交易": 3},
     "atm_limit": 20000,
     "atm_daily_limit": 150000,
+    # 人頭帳戶行為參數（壓力測試用；預設值即主要仿真資料的設定）
+    "mule_source_p": [0.35, 0.40, 0.25],  # 新開戶、休眠帳戶、出售帳戶（出售前有正常使用紀錄）的比例
+    "p_mule_ctrl": 0.6,                   # 由集團以少數裝置統一操作的比例
+    "p_test_tx": 0.5,                     # 收購後先做小額測試交易的比例
+    "fwd_fast_until": 0.5,                # 第一層轉出速度：< 此值為數小時內轉出
+    "fwd_slow_until": 0.8,                # 　　　　　　　　< 此值為隔 1～3 天轉出，其餘只轉出一部分
+    "mule_cap": None,                     # 每個第一層人頭帳戶最多收幾名被害人款項 [下限, 上限]；None＝假投資 8～25、其他 10～30
 }
 
 
@@ -475,7 +482,7 @@ class TaiwanBankSimulator:
 
     # ------------------------------------------------------------------ 人頭帳戶
     def new_mule(self, g: dict, layer: int, act_day: int) -> str:
-        kind = self.rng.choice(["新開戶", "休眠帳戶", "出售帳戶"], p=[0.35, 0.40, 0.25])
+        kind = self.rng.choice(["新開戶", "休眠帳戶", "出售帳戶"], p=self.cfg["mule_source_p"])
         role = {1: "第一層人頭帳戶", 2: "第二層人頭帳戶", 3: "循環交易帳戶"}[layer]
         ctype = "公司" if (layer == 3 and self.rng.random() < 0.6) else "個人"
         if kind == "新開戶":
@@ -497,10 +504,10 @@ class TaiwanBankSimulator:
         rec = self.acc[self.idx[a]]
         rec.update(label=1, fraud_group=g["group_id"], scheme=g["scheme"], mule_layer=layer, mule_source=kind)
         # 約六成的人頭帳戶由集團統一以少數裝置操作，其餘由車手或帳戶提供者自己的手機操作
-        self.mule_ctrl[a] = bool(self.rng.random() < 0.6)
+        self.mule_ctrl[a] = bool(self.rng.random() < self.cfg["p_mule_ctrl"])
         # 約半數收購後先做幾筆小額測試交易（近似測試行為）
         others = g["mules"]
-        for _ in range(self.ri(2, 4) if self.rng.random() < 0.5 else 0):
+        for _ in range(self.ri(2, 4) if self.rng.random() < self.cfg["p_test_tx"] else 0):
             t = self.t_on(max(act_day - self.ri(1, 3), 0))
             cp = self.pick(others) if others else self.pick(self.persons)
             if self.rng.random() < 0.5:
@@ -603,15 +610,17 @@ class TaiwanBankSimulator:
                 cur = self.new_mule(g, 1, day)
                 g["l1"].append(cur)
                 cur_alert, cur_n = 10**9, 0
-                cap = ri(8, 25) if sc == "假投資" else ri(10, 30)
+                lo, hi = self.cfg["mule_cap"] or ((8, 25) if sc == "假投資" else (10, 30))
+                cap = ri(lo, hi)
             self.add(t, v, cur, amt, ch, device=self.device.get(v, ""), fraud=1, pattern="被害人匯入")
             cur_alert = min(cur_alert, report)
             cur_n += 1
             # 第一層：數小時內轉出
             # 轉出速度不一：多數數小時內，部分隔 1～3 天，部分只轉出一部分
             r_ = rng.random()
-            tf = t + (u(0.3, 6) if r_ < 0.5 else u(24, 72) if r_ < 0.8 else u(2, 12))
-            keep = u(0.6, 0.9) if r_ >= 0.8 else u(0.97, 1.0)
+            fast, slow = self.cfg["fwd_fast_until"], self.cfg["fwd_slow_until"]
+            tf = t + (u(0.3, 6) if r_ < fast else u(24, 72) if r_ < slow else u(2, 12))
+            keep = u(0.6, 0.9) if r_ >= slow else u(0.97, 1.0)
             if sc == "假投資" or (sc != "解除分期" and rng.random() < 0.4):
                 total = amt * keep
                 k = ri(1, 3) if total > 60000 else 1

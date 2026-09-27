@@ -364,9 +364,19 @@ def markdown_to_docx(md: str) -> bytes:
 
 
 def build_workpaper(results: pd.DataFrame, tx: pd.DataFrame, metrics: dict | None, summary: dict,
-                    top_k: int = 200) -> bytes:
-    """稽核工作底稿（Excel）：摘要、高風險帳戶清單、規則命中明細、交易明細、模型成效。"""
-    top = results.sort_values("risk_score", ascending=False).head(top_k)
+                    top_k: int = 200, fallback_min: int | None = None, rule_quota: float = 0.0) -> bytes:
+    """稽核工作底稿（Excel）：摘要、高風險帳戶清單、規則名單、規則保底名單、規則命中明細、交易明細、模型成效。
+
+    rule_quota > 0 時，top_k 個覆核名額拆成 AI 名單與規則名單（新手法保險，見 model.dual_list）。
+    """
+    from .model import cycle_fallback, review_lists
+
+    ai_ids, rule_ids = review_lists(results, top_k, rule_quota)
+    top = results.loc[ai_ids]
+    rl = results.loc[rule_ids]
+    fb = (cycle_fallback(results, len(top), fallback_min)
+          if fallback_min and {"R4_cycles", "risk_rank"} <= set(results.columns) else results.iloc[:0])
+    fb = fb[~fb.index.isin(rl.index)]  # 已在規則名單中的不重複列出
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
         info = [
@@ -375,7 +385,8 @@ def build_workpaper(results: pd.DataFrame, tx: pd.DataFrame, metrics: dict | Non
             ("帳戶數", summary.get("n_accounts")),
             ("交易筆數", summary.get("n_transactions")),
             ("資料期間", f"{summary.get('date_start')} ~ {summary.get('date_end')}"),
-            ("本次覆核帳戶數", len(top)),
+            ("本次覆核帳戶數", f"{len(top) + len(rl)}（AI 名單 {len(top)}、規則名單 {len(rl)}）" if len(rl) else len(top)),
+            ("規則保底名單帳戶數", f"{len(fb)}（AI 名單外、參與資金循環 ≥ {fallback_min} 次）" if fallback_min else "未產生"),
             ("底稿產生時間", f"{datetime.now():%Y-%m-%d %H:%M}"),
             ("覆核人員", ""),
             ("覆核日期", ""),
@@ -395,8 +406,24 @@ def build_workpaper(results: pd.DataFrame, tx: pd.DataFrame, metrics: dict | Non
         lst["備註"] = ""
         lst.to_excel(xw, sheet_name="高風險帳戶清單", index=False)
 
+        if len(rl):
+            rcols = {"rule_hits": "命中規則數", "rule_list": "命中規則", "risk_rank": "AI排名", "risk_score": "AI風險分數",
+                     "n_in": "匯入筆數", "amt_in": "匯入金額", "n_out": "匯出筆數", "amt_out": "匯出金額"}
+            rr = rl.reset_index()[["account_id"] + [c for c in rcols if c in rl.columns]].rename(columns={"account_id": "帳戶", **rcols})
+            rr["覆核結論"] = ""
+            rr["備註"] = ""
+            rr.to_excel(xw, sheet_name="規則名單(新手法保險)", index=False)
+
+        if fallback_min:
+            fcols = {"risk_rank": "AI排名", "risk_score": "AI風險分數", "R4_cycles": "參與資金循環次數",
+                     "R4_evidence": "循環證據", "rule_list": "命中規則", "amt_in": "匯入金額", "amt_out": "匯出金額"}
+            fl = fb.reset_index()[["account_id"] + [c for c in fcols if c in fb.columns]].rename(columns={"account_id": "帳戶", **fcols})
+            fl["覆核結論"] = ""
+            fl["備註"] = ""
+            fl.to_excel(xw, sheet_name="規則保底名單(資金循環)", index=False)
+
         rows = []
-        for a, r in top.iterrows():
+        for a, r in pd.concat([top, rl]).iterrows():
             for code, name in RULES.items():
                 if r.get(f"{code}_hit", False):
                     rows.append({"帳戶": a, "規則": f"{code} {name}", "對應態樣／法規": RULE_REFS[code],

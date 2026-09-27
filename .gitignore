@@ -14,6 +14,10 @@ outputs/tw_sim/*
 # 外部驗證用的第二份仿真資料（執行時自動產生）
 data/raw/tw_sim_seed2/
 
+# IBM AMLworld（需自行從 Kaggle 下載，檔案很大，不可上傳）
+data/raw/*_Trans.csv
+data/raw/*_Patterns.txt
+
 # 金鑰與個人設定：絕對不要上傳
 .env
 *.key

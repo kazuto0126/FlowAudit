@@ -17,7 +17,7 @@ import streamlit.components.v1 as components
 from flowaudit import data_loader as dl
 from flowaudit.data_loader import CASH
 from flowaudit.features import FEATURE_GROUPS, FEATURE_NAMES_ZH
-from flowaudit.model import load_model
+from flowaudit.model import cycle_fallback, load_model, review_lists, rule_rank_score
 from flowaudit.pipeline import OUT_DIR, analyze, load_config, load_run, save_run
 from flowaudit.report import _llm_provider, build_workpaper, collect_facts, generate_report, markdown_to_docx
 from flowaudit.rules import RULE_DESCRIPTIONS, RULE_REFS, RULES, rule_availability
@@ -201,8 +201,7 @@ def page_overview():
         kmax = int(min(n, max(4 * y.sum(), 500)))
         ks = np.unique(np.linspace(1, kmax, 300).astype(int))
         ai = np.cumsum(y[np.argsort(-res["risk_score"].to_numpy(), kind="stable")])[ks - 1]
-        rscore = (res["rule_hits"] + 0.5 * res["R1_event_amount_share"] + 0.01 * np.log1p(res["R4_cycles"])).to_numpy()
-        rl = np.cumsum(y[np.argsort(-rscore, kind="stable")])[ks - 1]
+        rl = np.cumsum(y[np.argsort(-rule_rank_score(res), kind="stable")])[ks - 1]
         rnd = ks * y.mean()
         fig = go.Figure()
         for name, vals, col in (("AI 模型（FlowAudit）", ai, C_AI), ("傳統規則", rl, C_RULE), ("隨機抽樣", rnd, C_RAND)):
@@ -317,13 +316,52 @@ def page_list():
 
     c = st.columns(3)
     c[0].download_button("下載風險清單 CSV", show.to_csv(index=False).encode("utf-8-sig"), "risk_list.csv", "text/csv")
-    k = c[1].number_input("工作底稿涵蓋前幾名", 50, 2000, CFG["report"]["top_k_review"], step=50)
+    k = c[1].number_input("本月覆核名額（工作底稿帳戶數）", 50, 2000, CFG["report"]["top_k_review"], step=50)
+    n_min, quota = CFG["report"]["cycle_fallback_min"], CFG["report"].get("rule_quota", 0.0)
     c[2].download_button(
         "下載稽核工作底稿（Excel）",
-        build_workpaper(res, run["tx"], run["metrics"], run["summary"], top_k=int(k)),
+        build_workpaper(res, run["tx"], run["metrics"], run["summary"], top_k=int(k), fallback_min=n_min, rule_quota=quota),
         "FlowAudit_稽核工作底稿.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+    ai_ids, rule_ids = review_lists(res, int(k), quota)
+    if len(rule_ids):
+        rl = res.loc[rule_ids]
+        with st.expander(f"規則名單（新手法保險）：{int(k)} 個覆核名額中，AI 名單 {len(ai_ids)} 個、"
+                         f"規則分數最高但不在 AI 名單的 {len(rl)} 個"):
+            st.caption("AI 只學得到見過的詐騙手法。保留少量名額給規則，新手法出現時仍有機會被發現；"
+                       "平常幾乎不影響成效（見「模型評估」的新手法測試）。比例在 config.yaml 的 rule_quota 調整。")
+            rshow = rl.reset_index()[["account_id", "rule_hits", "rule_list", "risk_rank", "risk_score"]
+                                     + [c_ for c_ in ("customer_type", "amt_in", "amt_out") if c_ in rl.columns]]
+            if show_truth:
+                rshow["仿真真實角色"] = rl["role"].to_numpy()
+            st.dataframe(rshow, hide_index=True, use_container_width=True, column_config={
+                "account_id": "帳戶", "rule_hits": st.column_config.NumberColumn("命中規則數", format="%d"),
+                "rule_list": "命中規則", "risk_rank": st.column_config.NumberColumn("AI 排名", format="%d"),
+                "risk_score": st.column_config.NumberColumn("AI 風險分數", format="%.3f"), "customer_type": "類型",
+                "amt_in": st.column_config.NumberColumn("匯入金額", format="%.0f"),
+                "amt_out": st.column_config.NumberColumn("匯出金額", format="%.0f")})
+
+    if "R4_cycles" in res.columns:
+        fb = cycle_fallback(res, len(ai_ids), n_min)
+        fb = fb[~fb.index.isin(rule_ids)]
+        with st.expander(f"規則保底名單：覆核名單以外、參與資金循環 ≥ {n_min} 次的帳戶（{len(fb)} 個，另案專案查核）"):
+            st.caption("循環交易帳戶多為公司戶、很少被通報警示，AI 缺少可學習的樣本；R4 規則抓得到它們，但只循環一次的誤報很多。"
+                       "提高循環次數門檻後另列專案查核，補上 AI 的盲點。門檻在 config.yaml 的 cycle_fallback_min 調整；"
+                       "各門檻的名單大小與命中情形見「模型評估」頁。")
+            fcols = ["account_id", "risk_rank", "risk_score", "R4_cycles"] + \
+                    [c_ for c_ in ("customer_type", "rule_list", "R4_evidence", "amt_in", "amt_out") if c_ in fb.columns]
+            fshow = fb.reset_index()[fcols]
+            if show_truth:
+                fshow["仿真真實角色"] = fb["role"].to_numpy()
+            st.dataframe(fshow, hide_index=True, use_container_width=True, column_config={
+                "account_id": "帳戶", "risk_rank": st.column_config.NumberColumn("AI 排名", format="%d"),
+                "risk_score": st.column_config.NumberColumn("AI 風險分數", format="%.3f"),
+                "R4_cycles": st.column_config.NumberColumn("參與資金循環次數", format="%d"), "customer_type": "類型",
+                "rule_list": "命中規則", "R4_evidence": "循環證據",
+                "amt_in": st.column_config.NumberColumn("匯入金額", format="%.0f"),
+                "amt_out": st.column_config.NumberColumn("匯出金額", format="%.0f")})
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +548,8 @@ def page_evaluation():
         st.code(f"python -m flowaudit.evaluation --dataset {key}")
         return
 
-    tabs = st.tabs(["逐月持續稽核模擬", "成本效益試算", "多模型比較", "消融實驗", "誤判分析"])
+    tabs = st.tabs(["逐月持續稽核模擬", "成本效益試算", "多模型比較", "消融實驗", "誤判分析", "穩健性測試", "新手法測試",
+                    "規則保底名單"])
 
     # --- 逐月模擬
     with tabs[0]:
@@ -548,13 +587,31 @@ def page_evaluation():
                 "AI 可攔阻金額": r["by_k"][k]["ai"]["prevented_amount"], "排序方式": r["mode"]} for r in rows])
             st.dataframe(tbl, hide_index=True, use_container_width=True,
                          column_config={"AI 可攔阻金額": st.column_config.NumberColumn(format="%.0f")})
-            st.caption("第一個月已知警示帳戶太少，模型無法訓練，自動改用規則排序（冷啟動）；警示資料累積後 AI 明顯超越規則。"
+            st.caption("前兩個月已知警示帳戶很少，AI 與規則差不多（已知警示帳戶不到 5 個時自動改用規則排序）；"
+                       "警示資料累積後 AI 明顯超越規則。導入初期的空窗可用下方的「冷啟動」補上。"
                        "同一帳戶被找到後即凍結，不會在之後月份重複計算。")
             hy = s.get("hybrid")
             if hy:
                 st.caption(f"我們也測試過「規則＋AI 加權」的雙層排序：{n_b} 個月找出 {hy['unique_mules']} 個，"
                            f"{'低於' if hy['unique_mules'] < s['ai']['unique_mules'] else '接近'} AI 單獨排序，"
                            "因此系統以 AI 分數排序、規則作為說明證據。")
+            setting = tp.get("settings", {})
+            options = [("ai", "AI（只用自家警示資料）"), ("rules", "傳統規則"),
+                       ("dual", f"雙名單（保留 {setting.get('rule_quota', 0.1):.0%} 名額給規則）"),
+                       ("cold", "冷啟動：參考資料與自家資料分布相同"),
+                       ("cold_shift", "冷啟動：參考資料分布不同（較保守）")]
+            if any(w in s for w, _ in options[2:]):
+                st.markdown(f"**解決方案比較**（每月覆核 {k} 個帳戶，{n_b} 個月合計）")
+                st.dataframe(pd.DataFrame([{
+                    "排序方式": name, "找到人頭帳戶": s[w]["unique_mules"], "比警方通報更早": s[w]["caught_before_alert"],
+                    "可攔阻被害款項": s[w]["prevented_amount"]} for w, name in options if w in s]),
+                    hide_index=True, use_container_width=True,
+                    column_config={"可攔阻被害款項": st.column_config.NumberColumn(format="%.0f")})
+                st.caption(f"**冷啟動**：自家已知警示帳戶不到 {setting.get('switch_after', 50)} 個時，先用外部參考資料（代表同業或主管機關分享、"
+                           "已完成調查的資料）訓練的模型，之後改用自家模型。導入初期正是最能攔阻被害款項的時候，警示資料卻最少，"
+                           "冷啟動補上這段空窗。參考資料與自家資料都是同一個仿真器產生，實際效果會比表中低；"
+                           "「分布不同」一列改用人頭帳戶行為差異很大的壓力測試資料當參考，是較保守的估計。"
+                           "**雙名單**是新詐騙手法出現時的保險，說明見「新手法測試」。")
 
     # --- 成本效益
     with tabs[1]:
@@ -610,7 +667,7 @@ def page_evaluation():
                                hovertemplate="%{y}<br>PR-AUC %{x:.3f}<extra></extra>"))
         fig.update_xaxes(title="PR-AUC（越高越好；隨機約等於人頭帳戶比例）", range=[0, 1.1])
         fig.update_yaxes(autorange="reversed")
-        st.plotly_chart(style_fig(fig, 340), use_container_width=True)
+        st.plotly_chart(style_fig(fig, 100 + 42 * len(names)), use_container_width=True)
         tbl = pd.DataFrame([{"模型": n, "PR-AUC": ms[n]["pr_auc"], "95% 信賴區間": f"{ms[n]['pr_auc_ci'][0]:.3f}～{ms[n]['pr_auc_ci'][1]:.3f}",
                              "各折標準差": ms[n]["pr_auc_fold_std"], "ROC-AUC": ms[n]["roc_auc"],
                              "前 100 名命中率": next(x["precision"] for x in ms[n]["at_k"] if x["k"] == 100)} for n in names])
@@ -618,6 +675,12 @@ def page_evaluation():
                      hide_index=True, use_container_width=True)
         st.caption("孤立森林不需要標籤，可在完全沒有警示資料時使用，但效果遠不如監督式模型；"
                    "隨機森林與 XGBoost 表現接近，系統採用 XGBoost，因為它能精確計算每個帳戶的 TreeSHAP 解釋且訓練快速。")
+        if "規則加權（依警示資料學權重）" in ms and "XGBoost（只用 16 項規則指標）" in ms:
+            w_, r16 = ms["規則加權（依警示資料學權重）"]["pr_auc"], ms["XGBoost（只用 16 項規則指標）"]["pr_auc"]
+            st.caption(f"AI 的進步從哪裡來？只替 8 條規則的「是否命中」學權重，PR-AUC 為 {w_:.3f}，與現行規則差不多；"
+                       f"改用規則背後的連續數值（例如快進快出比例、循環次數）而不切門檻，就達到 {r16:.3f}；"
+                       f"再加上資金網路圖、時間管道等其餘特徵為 {ms['XGBoost（FlowAudit）']['pr_auc']:.3f}。"
+                       "也就是說，大部分的進步來自「不把規則切成是／否」，其餘特徵提供額外但較小的幫助。")
 
     # --- 消融
     with tabs[3]:
@@ -671,7 +734,122 @@ def page_evaluation():
             c[1].dataframe(pd.DataFrame([{"帳戶來源": k or "（其他）", "數量": v} for k, v in er["fn_by_source"].items()]),
                            hide_index=True, use_container_width=True)
         if er.get("fn_by_scheme"):
-            st.caption("循環交易帳戶多為公司戶、交易看似正常營運，是模型最難辨識的類型，也是未來改進的方向（可加入發票、營業額等外部資料）。")
+            st.caption("循環交易帳戶多為公司戶、很少被通報警示，模型幾乎沒有可學習的樣本，是 AI 最難辨識的類型；"
+                       "系統以「規則保底名單」補上（見最後一頁）。未來可加入發票、營業額等外部資料。")
+
+    # --- 穩健性
+    with tabs[5]:
+        ls = ev.get("label_scarcity")
+        rule_ap = ev["models"]["現行規則計分"]["pr_auc"]
+        if ls:
+            st.markdown("**警示資料很少時還有用嗎？** 隨機只保留一部分已警示帳戶訓練（其餘當作未知），仍以全部人頭帳戶評估；"
+                        "每個比例抽 3 次取平均，陰影為最低～最高。")
+            keys = sorted(ls, key=float)
+            xs = [ls[k_]["n_train_positive"] for k_ in keys]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=xs + xs[::-1], y=[ls[k_]["pr_auc_max"] for k_ in keys] + [ls[k_]["pr_auc_min"] for k_ in keys][::-1],
+                                     fill="toself", fillcolor="rgba(42,120,214,0.15)", line=dict(width=0), hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scatter(x=xs, y=[ls[k_]["pr_auc"] for k_ in keys], mode="lines+markers", name="AI 模型",
+                                     line=dict(color=C_AI, width=2),
+                                     customdata=[f"{float(k_):.0%}" for k_ in keys],
+                                     hovertemplate="已知警示 %{x} 個（%{customdata}）<br>PR-AUC %{y:.3f}<extra></extra>"))
+            fig.add_hline(y=rule_ap, line_dash="dash", line_color=C_RULE, annotation_text=f"傳統規則 {rule_ap:.3f}（不需標籤）",
+                          annotation_position="bottom right")
+            fig.update_xaxes(title="訓練用的已警示帳戶數", type="log")
+            fig.update_yaxes(title="PR-AUC", range=[0, 1.05])
+            st.plotly_chart(style_fig(fig, 340), use_container_width=True)
+            lo = ls[keys[0]]
+            st.caption(f"只知道 {lo['n_train_positive']} 個警示帳戶（{float(keys[0]):.0%}）時，AI 的 PR-AUC 仍有 {lo['pr_auc']:.3f}、"
+                       f"前 100 名命中率 {lo['p_at_100']:.0%}，高於傳統規則的 {rule_ap:.3f}。警示資料越多越好，但不需要大量標籤才能起步。")
+        st_ = ev.get("stress")
+        if st_:
+            st.markdown("**壓力測試**：讓人頭帳戶更隱蔽、正常帳戶更像人頭，每個情境重新產生一份仿真資料。"
+                        "「重新訓練」看方法本身能否適應；「不重新訓練」直接套用原本的模型，模擬詐騙手法改變但模型尚未更新。")
+            names = list(st_)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(y=names, x=[st_[n]["ai_pr_auc"] for n in names], orientation="h", name="AI（重新訓練）",
+                                 marker_color=C_AI, hovertemplate="%{y}<br>AI 重新訓練 %{x:.3f}<extra></extra>"))
+            fig.add_trace(go.Bar(y=names, x=[st_[n]["transfer_ai_pr_auc"] for n in names], orientation="h", name="AI（不重新訓練）",
+                                 marker_color=C_AI, opacity=0.45, hovertemplate="%{y}<br>AI 不重新訓練 %{x:.3f}<extra></extra>"))
+            fig.add_trace(go.Bar(y=names, x=[st_[n]["rules_pr_auc"] for n in names], orientation="h", name="傳統規則",
+                                 marker_color=C_RULE, hovertemplate="%{y}<br>規則 %{x:.3f}<extra></extra>"))
+            fig.update_layout(barmode="group")
+            fig.update_xaxes(title="PR-AUC", range=[0, 1.05])
+            fig.update_yaxes(autorange="reversed")
+            st.plotly_chart(style_fig(fig, 120 + 70 * len(names)), use_container_width=True)
+            st.dataframe(pd.DataFrame([{
+                "情境": n, "人頭帳戶": v["n_mules"], "AI 重新訓練": v["ai_pr_auc"], "AI 不重新訓練": v["transfer_ai_pr_auc"],
+                "傳統規則": v["rules_pr_auc"], "循環交易：AI 名單＋保底名單": f"{v['cycle']['ai_top_k'] + v['cycle']['fallback']}/{v['cycle']['n']}",
+            } for n, v in st_.items()]).style.format({"AI 重新訓練": "{:.3f}", "AI 不重新訓練": "{:.3f}", "傳統規則": "{:.3f}"}),
+                hide_index=True, use_container_width=True)
+            st.caption("參數設定見 docs/仿真設計與參數依據.md。壓力測試仍是合成資料，只能說明「在這些假設下」的相對表現。")
+        if not ls and not st_:
+            st.info("尚未執行。請執行 python -m flowaudit.evaluation --stress")
+
+    # --- 新手法測試
+    with tabs[6]:
+        un = ev.get("unseen")
+        if not un:
+            st.info("這份資料沒有詐騙類型資訊，或尚未執行評估（python -m flowaudit.evaluation）。")
+        else:
+            st.markdown("**AI 什麼時候會失效？** 監督式模型只學得到見過的手法。這裡在訓練時完全拿掉某一類詐騙的警示帳戶，"
+                        f"模擬「新手法剛出現、還沒有人被通報」，看覆核前 {un['k']} 名能找到多少該類帳戶。")
+            sch = un["schemes"]
+            ks_ = [k_ for k_ in next(iter(sch.values()))["learning"]]
+            fig = go.Figure()
+            for i, (sc, v) in enumerate(sch.items()):
+                fig.add_trace(go.Scatter(x=[int(k_) for k_ in ks_], y=[v["learning"][k_] for k_ in ks_], mode="lines+markers",
+                                         name=sc, line=dict(color=C_AI, width=2, dash=["solid", "dash", "dot"][i % 3]),
+                                         marker=dict(symbol=["circle", "square", "diamond"][i % 3], size=8),
+                                         hovertemplate=f"{sc}<br>已知 %{{x}} 個該類警示帳戶<br>其餘同類帳戶找回 %{{y:.0%}}<extra></extra>"))
+            fig.update_xaxes(title="訓練資料中該類手法的已警示帳戶數（0＝完全沒見過）", tickvals=[int(k_) for k_ in ks_])
+            fig.update_yaxes(title="其餘同類帳戶找回比例", tickformat=".0%", range=[0, 1.05])
+            st.plotly_chart(style_fig(fig, 320), use_container_width=True)
+            st.dataframe(pd.DataFrame([{"詐騙類型": sc, "帳戶數": v["n"], "AI 見過時": v["recall_seen"],
+                                        **{("完全沒見過" if k_ == "0" else f"只知道 {k_} 個"): v["learning"][k_] for k_ in ks_}}
+                                       for sc, v in sch.items()]).style.format({c_: "{:.0%}" for c_ in
+                                       ["AI 見過時"] + [("完全沒見過" if k_ == "0" else f"只知道 {k_} 個") for k_ in ks_]}),
+                         hide_index=True, use_container_width=True)
+            lo_, hi_ = min(v["learning"]["0"] for v in sch.values()), max(v["learning"]["0"] for v in sch.values())
+            k_max = ks_[-1]
+            st.caption(f"沒見過的手法，AI 只找回 {lo_:.0%}～{hi_:.0%}；只要累積 {k_max} 個該類警示帳戶，每月重新訓練後就提高到 "
+                       f"{min(v['learning'][k_max] for v in sch.values()):.0%}～{max(v['learning'][k_max] for v in sch.values()):.0%}。"
+                       "持續稽核（每月重新訓練）比一次性建模更重要。")
+            st.markdown("**新手法出現前的保險：排序策略的取捨**（覆核名額相同）")
+            strat = un["strategies"]
+            scs = list(sch)
+            st.dataframe(pd.DataFrame([{"排序策略": n, "全部手法都見過：找到人頭": v["hits_all_seen"],
+                                        **{f"{sc}沒見過：該類找回": v["recall_unseen"][sc] for sc in scs}}
+                                       for n, v in strat.items()]).style.format({f"{sc}沒見過：該類找回": "{:.0%}" for sc in scs}),
+                         hide_index=True, use_container_width=True)
+            st.caption("保留越多名額給規則，新手法出現時越保險，但平常找到的人頭帳戶會變少。這是風險胃納的選擇："
+                       "系統預設「雙名單」保留少量名額給規則（config.yaml 的 rule_quota），平常幾乎沒有損失；"
+                       "若主管機關或 165 發布新詐騙手法警訊，可暫時提高規則比重。")
+
+    # --- 規則保底名單
+    with tabs[7]:
+        fbs = ev.get("fallback")
+        if not fbs:
+            st.info("尚未執行。請重新執行 python -m flowaudit.evaluation")
+        else:
+            n_min = CFG["report"]["cycle_fallback_min"]
+            st.markdown(f"AI 名單（前 {next(iter(fbs.values()))['top_k']} 名）以外，**參與時間一致資金循環達 N 次**的帳戶另列專案查核。"
+                        f"下表列出所有門檻 N 的結果（目前設定 N = {n_min}），不只挑一個好看的數字。"
+                        + ("兩份資料由不同隨機種子產生，外部資料的模型從未見過。" if "tw_sim_seed2" in fbs else ""))
+            cols_ = st.columns(len(fbs))
+            for col, (name, fb) in zip(cols_, fbs.items()):
+                title = "主要仿真資料" if name == "tw_sim" else "外部資料（另一個隨機種子）" if name == "tw_sim_seed2" else dl.DATASETS.get(name, name)
+                col.markdown(f"**{title}**")
+                if "n_cycle_mules" in fb:
+                    col.caption(f"循環交易帳戶 {fb['n_cycle_mules']} 個，AI 名單內 {fb['cycle_in_ai_top_k']} 個")
+                df_ = pd.DataFrame([{"門檻 N": r["min_cycles"], "名單帳戶數": r["n_queue"], "其中人頭": r["mules"],
+                                     **({"其中循環交易": r["cycle_mules"]} if "cycle_mules" in r else {}),
+                                     "命中率": r["precision"]} for r in fb["rows"]])
+                col.dataframe(df_.style.format({"命中率": "{:.0%}"}).apply(
+                    lambda row: ["font-weight: 700" if row["門檻 N"] == n_min else "" for _ in row], axis=1),
+                    hide_index=True, use_container_width=True)
+            st.caption("門檻越高名單越短、命中率越高，但太高會漏掉循環次數較少的集團。循環交易也可能是虛增營收等其他舞弊，"
+                       "建議由稽核人員另案查核交易背後的商業實質。")
 
 
 # ---------------------------------------------------------------------------
@@ -728,9 +906,15 @@ def page_about():
    ├─③ XGBoost 風險模型：只用已警示帳戶訓練（貼近實務），集團層級交叉驗證
    ├─④ TreeSHAP：逐帳戶說明「為什麼可疑」
    ├─⑤ 疑似集團偵測：在可疑帳戶子圖上做 Louvain 社群偵測
-   ├─⑥ 報告生成：模板／LLM 撰寫可疑交易分析報告，匯出 Word 與 Excel 工作底稿
-   └─⑦ 嚴謹評估：多模型比較、消融實驗、逐月持續稽核模擬、成本效益、誤判分析
+   ├─⑥ 覆核名單：AI 名單＋規則名單（新手法保險）＋規則保底名單（資金循環，另案查核）
+   ├─⑦ 報告生成：模板／LLM 撰寫可疑交易分析報告，匯出 Word 與 Excel 工作底稿
+   └─⑧ 嚴謹評估：多模型比較、消融實驗、逐月持續稽核模擬（含冷啟動）、成本效益、誤判分析、
+                 警示稀少、新手法測試、壓力測試
 ```
+
+**為什麼要三份名單？** AI 只學得到見過、且有人被通報過的手法。沒見過的新手法與很少被通報的循環交易，
+由規則名單與規則保底名單補上；新手法累積少數警示帳戶後，每月重新訓練的 AI 就能追上。
+導入初期自家警示資料很少時，可先用外部參考資料訓練的模型（冷啟動）。
 """
     )
     avail = availability_for(current_run())
@@ -749,6 +933,10 @@ def page_about():
     )
     st.subheader("目前門檻設定（config.yaml）")
     st.json(CFG["rules"], expanded=False)
+    st.markdown("**覆核名單與冷啟動設定**")
+    st.json({"覆核名額": CFG["report"]["top_k_review"], "規則名單比例": CFG["report"].get("rule_quota", 0),
+             "保底名單循環次數門檻": CFG["report"]["cycle_fallback_min"], "冷啟動": CFG["model"].get("cold_start", {})},
+            expanded=False)
     st.subheader("模型特徵")
     st.dataframe(pd.DataFrame([{"類別": g, "特徵": c_, "說明": FEATURE_NAMES_ZH.get(c_, c_)} for g, cs in FEATURE_GROUPS.items() for c_ in cs]),
                  hide_index=True, use_container_width=True, height=320)
