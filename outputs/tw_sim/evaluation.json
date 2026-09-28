@@ -1897,7 +1897,21 @@
         }
       ],
       "n_cycle_mules": 17,
-      "cycle_in_ai_top_k": 0
+      "cycle_in_ai_top_k": 0,
+      "system": {
+        "rule_quota": 0.1,
+        "min_cycles": 5,
+        "ai_only_mules": 200,
+        "ai_list_n": 180,
+        "ai_list_mules": 180,
+        "ai_list_cycle": 0,
+        "rule_list_n": 20,
+        "rule_list_mules": 18,
+        "rule_list_cycle": 14,
+        "fallback_n": 36,
+        "fallback_mules": 3,
+        "fallback_cycle": 3
+      }
     },
     "tw_sim_seed2": {
       "top_k": 200,
@@ -1967,7 +1981,21 @@
         }
       ],
       "n_cycle_mules": 18,
-      "cycle_in_ai_top_k": 0
+      "cycle_in_ai_top_k": 0,
+      "system": {
+        "rule_quota": 0.1,
+        "min_cycles": 5,
+        "ai_only_mules": 200,
+        "ai_list_n": 180,
+        "ai_list_mules": 180,
+        "ai_list_cycle": 0,
+        "rule_list_n": 20,
+        "rule_list_mules": 19,
+        "rule_list_cycle": 9,
+        "fallback_n": 54,
+        "fallback_mules": 9,
+        "fallback_cycle": 9
+      }
     }
   },
   "stress": {
@@ -2161,5 +2189,5 @@
       }
     }
   },
-  "elapsed_sec": 853.6
+  "elapsed_sec": 757.1
 }
