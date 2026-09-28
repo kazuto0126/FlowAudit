@@ -18,6 +18,9 @@ data/raw/tw_sim_seed2/
 data/raw/*_Trans.csv
 data/raw/*_Patterns.txt
 
+# 本機工具設定（儀表板預覽）
+.claude/launch.json
+
 # 金鑰與個人設定：絕對不要上傳
 .env
 *.key
