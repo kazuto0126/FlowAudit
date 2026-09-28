@@ -9,7 +9,9 @@ pip install -r requirements.txt
 python -m flowaudit.simulator                         # 重新產生台灣情境仿真資料（已隨附，通常不用）
 python -m flowaudit.pipeline                          # 規則全查 + 特徵 + 模型訓練 + 外部驗證（約 1～2 分鐘）
 python -m flowaudit.pipeline --dataset amlsim_fanin_cycle
-python -m flowaudit.evaluation                        # 多模型比較、消融、逐月模擬、誤判分析（約 5 分鐘）
+python -m flowaudit.evaluation                        # 多模型比較、消融、逐月模擬、誤判分析、新手法測試等（約 15 分鐘）
+python -m flowaudit.evaluation --stress               # 另外重跑壓力測試（再加約 15 分鐘；未加時沿用上次結果）
+python -m flowaudit.amlworld_check                    # IBM AMLworld 外部驗證（需先把 HI-Small_Trans.csv 放到 data/raw/）
 python -m streamlit run app.py                        # 儀表板 http://localhost:8501
 python -m pytest -q                                   # 測試，改完程式一定要跑
 ```
@@ -25,6 +27,7 @@ python -m pytest -q                                   # 測試，改完程式一
 - `flowaudit/model.py`：XGBoost、集團層級交叉驗證、TreeSHAP、成效指標
 - `flowaudit/pipeline.py`：端對端流程、疑似集團偵測、外部驗證、結果存檔（`outputs/<資料集>/`）
 - `flowaudit/evaluation.py`：嚴謹評估，輸出 `outputs/tw_sim/evaluation.json`
+- `flowaudit/amlworld_check.py`：AMLworld 外部驗證一鍵執行，結果在 `outputs/amlworld_check/`
 - `flowaudit/report.py`：可疑交易分析報告（模板／LLM）、Word 匯出、Excel 工作底稿
 - `app.py`：Streamlit 儀表板（7 頁）
 - `config.yaml`：規則門檻與模型參數；調整門檻改這裡，不要寫死在程式裡

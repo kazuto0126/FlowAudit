@@ -117,10 +117,16 @@ pytest -q                             # 執行測試
 |---|---|---|
 | **台灣情境仿真資料**（預設，已內附） | 新台幣、交易時間、管道、登入裝置、開戶日、休眠天數；20 個詐騙集團（假投資、網購、解除分期、循環交易）與大量容易誤判的正常帳戶。設計依據見 [docs/仿真設計與參數依據.md](docs/仿真設計與參數依據.md) | 預設 |
 | **IBM AMLSim 樣本**（已內附） | IBM 開源反洗錢模擬器的 20K 帳戶樣本，Apache-2.0 授權，見 `data/raw/AMLSim_LICENSE.txt` | 儀表板左側切換；`python -m flowaudit.pipeline --dataset amlsim_fanin_cycle` |
-| **IBM AMLworld**（需自行下載） | Kaggle「IBM Transactions for Anti Money Laundering」，如 `HI-Small_Trans.csv`，放在 `data/raw/`（已被 .gitignore 排除） | `python -m flowaudit.pipeline --amlworld data/raw/HI-Small_Trans.csv`（可加 `--nrows 1000000` 先試跑） |
+| **IBM AMLworld**（需自行下載） | Kaggle「IBM Transactions for Anti Money Laundering」，如 `HI-Small_Trans.csv`，放在 `data/raw/`（已被 .gitignore 排除） | 一鍵外部驗證：Windows 雙擊 `run_amlworld_windows.bat`、macOS／Linux 執行 `./run_amlworld_mac_linux.sh`（見下方） |
 | 任意 CSV | 需含 `src, dst, amount` 以及 `step` 或 `date`；可選 `channel`、`device_id`，現金存提的對手填 `CASH` | 儀表板「上傳新資料全查」 |
 
 `data/demo_upload/` 內附一份示範用交易檔，可在上傳頁面現場展示全查流程。
+
+**IBM AMLworld 外部驗證（一鍵執行，不需要 AI 工具）**：把 `HI-Small_Trans.csv` 放到 `data/raw/` 後，
+Windows 雙擊 `run_amlworld_windows.bat`，macOS／Linux 執行 `./run_amlworld_mac_linux.sh`
+（或 `python -m flowaudit.amlworld_check`）。程式先跑前 100 萬列、再跑全部資料，每個階段在獨立程序執行，
+記錄耗時與記憶體峰值；某階段記憶體不足或逾時（預設 3 小時）時，前面的結果會保留。
+結果在 `outputs/amlworld_check/`（`report.md` 為中文報告），把整個資料夾傳回即可。
 
 **大資料效能參考**（以與 AMLworld 同格式、隨機產生的資料測試；記憶體 7.3 GB 的筆電）：80 萬筆交易、35 萬個帳戶，
 全查＋特徵＋5 折訓練約 9 分鐘（規則 160 秒、特徵 258 秒、訓練 108 秒），記憶體峰值約 2.2 GB。
@@ -175,13 +181,15 @@ flowaudit/
 │   ├── model.py                  XGBoost、集團層級交叉驗證、TreeSHAP、成效指標
 │   ├── pipeline.py               端對端流程、疑似集團偵測、外部驗證
 │   ├── evaluation.py             多模型比較、消融、逐月模擬、誤判分析、警示稀少、規則保底名單、壓力測試
+│   ├── amlworld_check.py         IBM AMLworld 外部驗證（一鍵執行、記錄耗時與記憶體）
 │   └── report.py                 可疑交易分析報告、Word 匯出、Excel 工作底稿
 ├── data/raw/tw_sim/              台灣情境仿真資料
 ├── data/raw/                     AMLSim 公開樣本
 ├── data/demo_upload/             上傳功能示範資料
 ├── docs/仿真設計與參數依據.md      仿真參數與出處
 ├── docs/screenshots/             儀表板截圖
-├── tests/                        pytest 測試（17 項）
+├── run_amlworld_windows.bat      AMLworld 外部驗證一鍵執行（macOS／Linux：run_amlworld_mac_linux.sh）
+├── tests/                        pytest 測試（18 項）
 └── outputs/                      執行結果（evaluation.json 已隨附）
 ```
 

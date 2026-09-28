@@ -156,6 +156,21 @@ def test_amlworld_loader(tmp_path):
     assert ds.transactions["step"].tolist() == [0, 2]
 
 
+def test_amlworld_check_report(tmp_path):
+    from flowaudit.amlworld_check import write_report
+    at = [{"k": 100, "hits": 30, "precision": 0.3, "recall": 0.1}]
+    ok = {"summary": {"n_transactions": 800000, "n_accounts": 350000}, "elapsed_sec": 529.0, "peak_memory_gb": 2.2,
+          "steps": [{"step": "[1/4] 規則引擎全查 …", "sec": 160.0}], "n_cycles_found": 20000, "cycle_search_capped": True,
+          "metrics": {"positive_rate": 0.002, "model": {"pr_auc": 0.41, "at_k": at}, "rules": {"pr_auc": 0.12, "at_k": at}}}
+    env = {"os": "測試", "cpu_count": 4, "memory_gb": 16, "python": "3.12", "commit": "abc", "xgboost": "x",
+           "scikit-learn": "x", "pandas": "x", "numpy": "x", "networkx": "x"}
+    recs = [{"nrows": 1000000, "status": "完成", "wall_sec": 530, "result": ok},
+            {"nrows": None, "status": "失敗（結束代碼 1，常見原因是記憶體不足）", "wall_sec": 60, "result": None}]
+    write_report(recs, env, tmp_path / "HI-Small_Trans.csv", tmp_path)
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "**0.410**" in md and "前 1,000,000 列" in md and "全部資料 | 失敗" in md and "20,000 個上限" in md
+
+
 def test_generic_csv_and_scoring():
     run = _run_or_skip("tw_sim")
     from flowaudit.model import load_model
