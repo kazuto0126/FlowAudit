@@ -1,0 +1,3 @@
+# Windows 批次檔保留 CRLF 換行（從 GitHub 直接下載 ZIP 也能正常執行）；shell 腳本一律 LF
+*.bat -text
+*.sh text eol=lf

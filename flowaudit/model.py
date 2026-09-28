@@ -153,6 +153,40 @@ def rule_rank_score(rules: pd.DataFrame) -> np.ndarray:
     return (rules["rule_hits"] + 0.5 * rules["R1_event_amount_share"] + 0.01 * np.log1p(rules["R4_cycles"])).to_numpy()
 
 
+def dual_list(ai: np.ndarray, rule: np.ndarray, k: int, rule_quota: float) -> np.ndarray:
+    """雙名單：k 個覆核名額中，(1 - rule_quota) 給 AI 分數最高者，其餘給「不在 AI 名單、規則分數最高」者。
+
+    AI 只學得到見過的詐騙手法；保留少數名額給規則，是新手法出現時的保險。回傳位置索引（AI 名單在前）。
+    """
+    ai, rule = np.asarray(ai), np.asarray(rule)
+    k = min(k, len(ai))
+    k_ai = int(round(k * (1 - rule_quota)))
+    o_ai = np.argsort(-ai, kind="stable")[:k_ai]
+    rest = np.setdiff1d(np.arange(len(ai)), o_ai)
+    return np.r_[o_ai, rest[np.argsort(-rule[rest], kind="stable")[: k - k_ai]]]
+
+
+def review_lists(res: pd.DataFrame, top_k: int, rule_quota: float = 0.0) -> tuple[pd.Index, pd.Index]:
+    """覆核名單：依 dual_list 分配 top_k 個名額，回傳 (AI 名單, 規則名單) 的帳戶代號。"""
+    need = {"rule_hits", "R1_event_amount_share", "R4_cycles"}
+    if rule_quota <= 0 or not need <= set(res.columns):
+        rule_quota, rule = 0.0, np.zeros(len(res))
+    else:
+        rule = rule_rank_score(res)
+    pick = dual_list(res["risk_score"].to_numpy(), rule, top_k, rule_quota)
+    k_ai = int(round(min(top_k, len(res)) * (1 - rule_quota)))
+    return res.index[pick[:k_ai]], res.index[pick[k_ai:]]
+
+
+def cycle_fallback(res: pd.DataFrame, top_k: int, min_cycles: int) -> pd.DataFrame:
+    """規則保底名單：AI 前 top_k 名以外、參與時間一致資金循環達 min_cycles 次的帳戶，另列專案查核。
+
+    循環交易帳戶多為公司戶、很少被通報警示，監督式模型幾乎沒有樣本可學；R4 抓得到它們但單次循環誤報多，
+    提高循環次數門檻後另列名單，補上 AI 的盲點（僅用規則結果，不含標籤）。
+    """
+    return res[(res["risk_rank"] > top_k) & (res["R4_cycles"] >= min_cycles)].sort_values("R4_cycles", ascending=False)
+
+
 def cv_groups(accounts: pd.DataFrame, index: pd.Index) -> pd.Series | None:
     """集團層級切分用的群組：詐騙帳戶用集團代號，其他帳戶各自一組。"""
     if "fraud_group" not in accounts.columns:

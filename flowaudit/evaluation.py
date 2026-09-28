@@ -7,12 +7,18 @@
    對尚未被警示的帳戶排序、覆核前 K 名，計算抓到幾個、平均提前幾天、可攔阻多少被害款項。
 4. 成本效益：覆核人力時數與成本 vs. 攔阻金額。
 5. 誤判分析：被誤判的是哪些正常帳戶、漏掉的是哪種人頭帳戶。
+6. 警示資料稀少：銀行只知道一小部分警示帳戶時，模型還剩多少成效。
+7. 新手法測試：訓練時拿掉某一類詐騙，AI 能否找到；新手法累積幾個警示帳戶後模型能學會；各排序策略的取捨。
+8. 規則保底名單：AI 名單外、參與資金循環達門檻的帳戶，各門檻的名單大小與命中情形（含外部資料）。
+9. 壓力測試（--stress）：人頭帳戶更隱蔽、轉出更慢、分散收款、困難正常樣本加倍時，AI 與規則各掉多少。
+逐月模擬另比較「雙名單」與「冷啟動」（自家警示不足時先用參考資料訓練的模型）。
 
-用法：python -m flowaudit.evaluation [--dataset tw_sim] [--quick]
+用法：python -m flowaudit.evaluation [--dataset tw_sim] [--quick] [--stress]
 """
 from __future__ import annotations
 
 import argparse
+import json
 import time
 
 import numpy as np
@@ -26,10 +32,11 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from . import data_loader as dl
-from .features import FEATURE_GROUPS, build_features
-from .model import _params, cv_groups, dump_json, hybrid_score, make_folds, precision_recall_at_k, rule_rank_score
-from .pipeline import OUT_DIR, load_config, load_run, training_labels
-from .rules import run_rules
+from .features import FEATURE_GROUPS, RULE_FEATURES, build_features
+from .model import (_params, cv_groups, cycle_fallback, dual_list, dump_json, hybrid_score, load_model, make_folds,
+                    precision_recall_at_k, review_lists, rule_rank_score)
+from .pipeline import OUT_DIR, analyze, load_config, load_run, training_labels
+from .rules import RULES, run_rules
 
 
 # ---------------------------------------------------------------------------
@@ -79,13 +86,19 @@ def summarize(y, s, folds, ks=(100, 200)):
 
 # ---------------------------------------------------------------------------
 def compare_models(X, y_true, y_train, folds, cfg, rules, log):
+    lr = lambda: make_pipeline(StandardScaler(), LogisticRegression(class_weight="balanced", max_iter=3000))
+    hits = rules.reindex(X.index)[[f"{c}_hit" for c in RULES]].astype(float)
     models = {
         "現行規則計分": None,
-        "孤立森林（非監督）": ("unsup", lambda: IsolationForest(n_estimators=300, random_state=0, n_jobs=-1)),
-        "邏輯斯迴歸": ("sup", lambda: make_pipeline(StandardScaler(), LogisticRegression(class_weight="balanced", max_iter=3000))),
+        # 銀行最容易做到的改良：用同一批警示帳戶替 8 條規則的命中結果學權重
+        "規則加權（依警示資料學權重）": ("sup", lr, hits),
+        "孤立森林（非監督）": ("unsup", lambda: IsolationForest(n_estimators=300, random_state=0, n_jobs=-1), X),
+        "邏輯斯迴歸": ("sup", lr, X),
         "隨機森林": ("sup", lambda: RandomForestClassifier(n_estimators=300, min_samples_leaf=2, class_weight="balanced_subsample",
-                                                        n_jobs=-1, random_state=0)),
-        "XGBoost（FlowAudit）": ("sup", lambda: _xgb(cfg, y_train)),
+                                                        n_jobs=-1, random_state=0), X),
+        # 只用規則的連續數值、不切門檻：拆解 AI 的進步有多少來自「保留規則數值」、多少來自其他特徵
+        "XGBoost（只用 16 項規則指標）": ("sup", lambda: _xgb(cfg, y_train), X[RULE_FEATURES]),
+        "XGBoost（FlowAudit）": ("sup", lambda: _xgb(cfg, y_train), X),
     }
     out, scores = {}, {}
     for name, spec in models.items():
@@ -93,8 +106,8 @@ def compare_models(X, y_true, y_train, folds, cfg, rules, log):
         if spec is None:
             s = rule_rank_score(rules.reindex(X.index))
         else:
-            kind, mk = spec
-            s = oof_scores(mk, X, y_train, folds, unsupervised=(kind == "unsup"))
+            kind, mk, data = spec
+            s = oof_scores(mk, data, y_train, folds, unsupervised=(kind == "unsup"))
         scores[name] = s
         out[name] = summarize(y_true, s, folds)
         log(f"  {name:<16} PR-AUC {out[name]['pr_auc']:.3f} "
@@ -125,17 +138,224 @@ def ablation(X, y_true, y_train, folds, cfg, log):
             "only": float(average_precision_score(y_true, s_only)),
         }
         out[g]["drop"] = base - out[g]["without"]
-        log(f"  {g:<10} 拿掉後 {out[g]['without']:.3f}（-{out[g]['drop']:.3f}）｜只用 {out[g]['only']:.3f}")
+        log(f"  {g:<10} 拿掉後 {out[g]['without']:.3f}（{-out[g]['drop']:+.3f}）｜只用 {out[g]['only']:.3f}")
+    return out
+
+
+def label_scarcity(X, y_true, y_train, folds, cfg, log, fracs=(1.0, 0.5, 0.25, 0.1, 0.05), reps=3):
+    """警示資料很少時還有用嗎？隨機只保留一部分已警示帳戶當訓練正樣本（其餘視為未知），
+    仍以全部真實人頭帳戶評估；每個比例抽 reps 次取平均。"""
+    known = np.flatnonzero(y_train.to_numpy() == 1)
+    yv = np.asarray(y_true)
+    n_pos = int(yv.sum())
+    out = {}
+    for frac in fracs:
+        n = max(int(round(len(known) * frac)), 1)
+        runs = []
+        for rep in range(1 if frac == 1.0 else reps):
+            keep = np.random.default_rng(100 + rep).choice(known, size=n, replace=False)
+            yt = pd.Series(0, index=X.index)
+            yt.iloc[keep] = 1
+            s = oof_scores(lambda: _xgb(cfg, yt), X, yt, folds)
+            at = precision_recall_at_k(yv, s, [100, n_pos])
+            runs.append((average_precision_score(yv, s), at[0]["precision"], at[1]["precision"]))
+        r = np.array(runs)
+        out[f"{frac:g}"] = {"n_train_positive": n, "reps": len(runs), "pr_auc": float(r[:, 0].mean()),
+                            "pr_auc_min": float(r[:, 0].min()), "pr_auc_max": float(r[:, 0].max()),
+                            "p_at_100": float(r[:, 1].mean()), "p_at_n_pos": float(r[:, 2].mean())}
+        log(f"  已知警示 {frac:>4.0%}（{n:>3} 個）：PR-AUC {r[:, 0].mean():.3f}"
+            f"（{r[:, 0].min():.3f}～{r[:, 0].max():.3f}）｜前 100 名命中 {r[:, 1].mean():.0%}")
+    return out
+
+
+def fallback_eval(res: pd.DataFrame, top_k: int, ns=range(2, 11), rule_quota: float = 0.0, n_min: int = 5) -> dict:
+    """規則保底名單在各種循環次數門檻下的名單大小與命中情形（列出全部門檻，不只挑一個）。
+
+    另計算系統預設的完整流程：雙名單（AI 名單＋規則名單）再加上保底名單，三份名單各找到多少。
+    """
+    lab = res["label"].fillna(0)
+    has_scheme = "scheme" in res.columns
+    cyc = res["scheme"] == "循環交易" if has_scheme else pd.Series(False, index=res.index)
+    out = {"top_k": top_k, "rows": []}
+    if has_scheme:
+        out["n_cycle_mules"] = int(cyc.sum())
+        out["cycle_in_ai_top_k"] = int((cyc & (res["risk_rank"] <= top_k)).sum())
+    for n in ns:
+        q = cycle_fallback(res, top_k, n)
+        row = {"min_cycles": n, "n_queue": len(q), "mules": int(lab[q.index].sum()),
+               "precision": float(lab[q.index].mean()) if len(q) else 0.0}
+        if has_scheme:
+            row["cycle_mules"] = int(cyc[q.index].sum())
+        out["rows"].append(row)
+    ai_ids, rule_ids = review_lists(res, top_k, rule_quota)
+    fb = cycle_fallback(res, len(ai_ids), n_min)
+    fb = fb[~fb.index.isin(rule_ids)]
+    ai_only = res.index[np.argsort(-res["risk_score"].to_numpy(), kind="stable")[:top_k]]
+    out["system"] = {"rule_quota": rule_quota, "min_cycles": n_min, "ai_only_mules": int(lab[ai_only].sum()),
+                     **{f"{name}_{what}": v for name, ids in (("ai_list", ai_ids), ("rule_list", rule_ids), ("fallback", fb.index))
+                        for what, v in (("n", len(ids)), ("mules", int(lab[ids].sum())), ("cycle", int(cyc[ids].sum())))}}
+    return out
+
+
+def unseen_scheme(X, res, y_true, y_train, folds, cfg, log, ks_known=(0, 3, 10), reps=3):
+    """新手法測試：訓練時拿掉某一類詐騙的已警示帳戶（只留 k 個，當作這種手法剛出現），
+    看模型能否找到其餘同類帳戶。覆核名額＝人頭帳戶總數。
+
+    同時比較幾種排序策略在「全部手法都見過」與「某手法沒見過」時的表現，讓稽核人員依風險胃納取捨：
+    AI 單獨、雙名單（保留規則名額）、規則＋AI 加權、規則單獨。
+    """
+    yv = np.asarray(y_true)
+    n_pos = int(yv.sum())
+    rule = rule_rank_score(res)
+    quota = cfg["report"].get("rule_quota", 0.1)
+    strategies = {
+        "AI 單獨": lambda s: np.argsort(-s, kind="stable")[:n_pos],
+        f"雙名單（規則 {quota:.0%}）": lambda s: dual_list(s, rule, n_pos, quota),
+        "雙名單（規則 20%）": lambda s: dual_list(s, rule, n_pos, 0.2),
+        "規則＋AI 加權（AI 90%）": lambda s: np.argsort(-hybrid_score(s, rule, 0.9), kind="stable")[:n_pos],
+        "規則＋AI 加權（AI 70%）": lambda s: np.argsort(-hybrid_score(s, rule, 0.7), kind="stable")[:n_pos],
+        "規則單獨": lambda s: np.argsort(-rule, kind="stable")[:n_pos],
+    }
+    s_seen = res["risk_score"].to_numpy()
+    out = {"k": n_pos, "strategies": {n: {"hits_all_seen": int(yv[f(s_seen)].sum())} for n, f in strategies.items()},
+           "schemes": {}}
+    y_tr = y_train.to_numpy()
+    top_seen = np.argsort(-s_seen, kind="stable")[:n_pos]
+    # 循環交易的已警示帳戶太少（見規則保底名單），不納入
+    for sc in [s for s in res["scheme"].unique() if s and s != "循環交易"]:
+        is_sc = (res["scheme"] == sc).to_numpy()
+        known_sc = np.flatnonzero(is_sc & (y_tr == 1))
+        rec = {"n": int(is_sc.sum()), "recall_seen": float(np.isin(np.flatnonzero(is_sc), top_seen).mean()), "learning": {}}
+        for k in ks_known:
+            vals, s0 = [], None
+            for rep in range(reps if k else 1):
+                keep = np.random.default_rng(rep).choice(known_sc, size=min(k, len(known_sc)), replace=False) if k else []
+                yt = y_train.copy()
+                yt.iloc[known_sc] = 0
+                yt.iloc[keep] = 1
+                s = oof_scores(lambda: _xgb(cfg["model"], yt), X, yt, folds)
+                tgt = np.flatnonzero(is_sc & (yt.to_numpy() == 0))
+                vals.append(float(np.isin(tgt, np.argsort(-s, kind="stable")[:n_pos]).mean()))
+                if k == 0:
+                    s0 = s
+            rec["learning"][str(k)] = float(np.mean(vals))
+            if k == 0:
+                tgt = np.flatnonzero(is_sc)
+                for n, f in strategies.items():
+                    pick = f(s0)
+                    out["strategies"][n].setdefault("recall_unseen", {})[sc] = float(np.isin(tgt, pick).mean())
+                    out["strategies"][n].setdefault("hits_unseen", {})[sc] = int(yv[pick].sum())
+        out["schemes"][sc] = rec
+        log(f"  {sc}：見過 {rec['recall_seen']:.0%}｜沒見過 {rec['learning']['0']:.0%}｜"
+            + "｜".join(f"已知 {k} 個 {rec['learning'][str(k)]:.0%}" for k in ks_known if k))
+    return out
+
+
+# 壓力測試情境：讓人頭帳戶更隱蔽、正常帳戶更像人頭（參數說明見 simulator.DEFAULT_CFG）
+_HARD_NEG = ("n_landlord", "n_groupbuy", "n_collector", "n_family_mgr", "n_seller", "n_rosca", "n_reactivated")
+_COVERT = {"mule_source_p": [0.15, 0.15, 0.70], "p_mule_ctrl": 0.2, "p_test_tx": 0.15}
+_SLOW = {"fwd_fast_until": 0.2, "fwd_slow_until": 0.8}
+_SPREAD = {"mule_cap": [2, 5]}
+STRESS_SEED = 20260103  # 與主要資料、外部驗證資料都不同
+
+
+def stress_scenarios() -> dict:
+    from .simulator import DEFAULT_CFG
+    hard = {k: DEFAULT_CFG[k] * 2 for k in _HARD_NEG}
+    return {
+        "基準（新隨機種子）": {},
+        "隱蔽型人頭：多為出售帳戶、少共用裝置、少測試交易": _COVERT,
+        "慢速轉出：多數隔 1～3 天才轉出": _SLOW,
+        "困難正常樣本加倍": hard,
+        "分散收款：每個人頭帳戶只收 2～5 名被害人": _SPREAD,
+        "以上全部": {**_COVERT, **_SLOW, **hard, **_SPREAD},
+    }
+
+
+def stress_data_dir(over: dict) -> "Path":
+    """壓力測試資料的快取位置：依情境參數命名，參數改了就會重新產生。"""
+    import hashlib
+    h = hashlib.md5(json.dumps({"seed": STRESS_SEED, **over}, sort_keys=True).encode()).hexdigest()[:10]
+    return OUT_DIR / "tw_sim" / "stress" / h
+
+
+def stress_test(cfg: dict, log, top_k: int | None = None) -> dict:
+    """壓力測試：每個情境各產生一份仿真資料，
+    (a) 在該資料上重新訓練（集團層級交叉驗證）→ 方法本身能否適應；
+    (b) 直接套用主要資料訓練的模型、不重新訓練 → 詐騙手法改變時模型衰退多少。"""
+    from .simulator import generate
+    top_k = top_k or cfg["report"]["top_k_review"]
+    n_min = cfg["report"]["cycle_fallback_min"]
+    base_model = load_model(OUT_DIR / "tw_sim" / "model.json")
+    out = {}
+    for name, over in stress_scenarios().items():
+        t0 = time.time()
+        d = stress_data_dir(over)
+        if not (d / "transactions.csv.gz").exists():
+            generate(d, cfg={"seed": STRESS_SEED, **over}, verbose=False)
+        ds = dl.load_twsim(d, name=f"stress_{d.name}")
+        r = analyze(ds, cfg, log=lambda *_: None)
+        m, res = r["metrics"], r["results"]
+        n_pos = int(res["label"].sum())
+        at = lambda who: next(a["precision"] for a in m[who]["at_k"] if a["k"] == n_pos)
+        transfer = analyze(ds, cfg, model=base_model, log=lambda *_: None)["metrics"]
+        pos = res[res["label"] == 1]
+        top = pos["risk_rank"] <= n_pos
+        cyc = res["scheme"] == "循環交易"
+        fb = cycle_fallback(res, top_k, n_min)
+        out[name] = {
+            "n_accounts": int(len(res)), "n_mules": n_pos, "n_train_positive": m["train_label"]["n_train_positive"],
+            "params": over, "positive_rate": m["positive_rate"],
+            "ai_pr_auc": m["model"]["pr_auc"], "rules_pr_auc": m["rules"]["pr_auc"],
+            "transfer_ai_pr_auc": transfer["model"]["pr_auc"], "ai_p_at_n_pos": at("model"), "rules_p_at_n_pos": at("rules"),
+            "recall_by_scheme": top.groupby(pos["scheme"]).mean().round(3).to_dict(),
+            "cycle": {"n": int(cyc.sum()), "ai_top_k": int((cyc & (res["risk_rank"] <= top_k)).sum()),
+                      "fallback": int(cyc[fb.index].sum()), "fallback_queue": int(len(fb))},
+        }
+        o = out[name]
+        log(f"  {name}：AI {o['ai_pr_auc']:.3f}｜不重新訓練 {o['transfer_ai_pr_auc']:.3f}｜規則 {o['rules_pr_auc']:.3f}"
+            f"（{time.time() - t0:.0f}s）")
     return out
 
 
 # ---------------------------------------------------------------------------
+def _window(ds: dl.Dataset, T, cfg: dict):
+    """只用 T 之前的交易重算規則與特徵（帳戶屬性照舊；真實角色欄位不進特徵）。"""
+    acc_all = ds.accounts.set_index(ds.accounts["account_id"].astype(str))
+    tx = ds.transactions[ds.transactions["date"] < T].copy()
+    ids = pd.Index(pd.unique(pd.concat([tx["src"], tx["dst"]]))).difference(list(dl.EXTERNAL_IDS))
+    acc = acc_all.drop(columns="account_id").reindex(ids).rename_axis("account_id").reset_index()
+    rules, _ = run_rules(tx, acc, cfg["rules"])
+    X, _, _ = build_features(tx, acc, rules)
+    return acc.set_index("account_id").reindex(X.index), rules.reindex(X.index), X
+
+
+def cold_start_references(cfg: dict) -> dict:
+    """冷啟動參考資料：設定檔指定的外部資料（分布相同），以及壓力測試「以上全部」情境的資料（分布不同，較保守）。
+    參考資料只取已被警示的帳戶當正樣本，與自家模型的訓練方式一致。"""
+    from .simulator import generate
+    name = cfg["model"].get("cold_start", {}).get("reference")
+    if not name:
+        return {}
+    ref = dl.RAW_DIR / name
+    if not (ref / "transactions.csv.gz").exists():
+        generate(ref, cfg={"seed": 20260102}, verbose=False)
+    over = stress_scenarios()["以上全部"]
+    shift = stress_data_dir(over)
+    if not (shift / "transactions.csv.gz").exists():
+        generate(shift, cfg={"seed": STRESS_SEED, **over}, verbose=False)
+    return {"cold": dl.load_twsim(ref, name=name), "cold_shift": dl.load_twsim(shift, name=f"stress_{shift.name}")}
+
+
 def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200)):
     """逐月持續稽核模擬。
 
     每個批次日 T（每月 1 日）：只用 T 之前的交易、T 之前已被警示的帳戶訓練模型，
     對「尚未被警示、也尚未被本系統抓到」的帳戶排序，覆核前 K 名。
     被覆核確認的人頭帳戶視為當天凍結：之後的被害人匯款可被攔阻，且不會在下個月重複計算。
+
+    比較的排序方式：ai（自家模型）、rules（現行規則）、hybrid（規則＋AI 加權）、
+    dual（雙名單：保留 rule_quota 名額給規則）、cold／cold_shift（冷啟動：自家警示不足時改用參考資料訓練的模型）。
     """
     tx_all, acc_all = ds.transactions, ds.accounts
     acc_all = acc_all.set_index(acc_all["account_id"].astype(str))
@@ -148,20 +368,19 @@ def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200)):
         T += pd.DateOffset(months=1)
     pattern = tx_all["pattern"] if "pattern" in tx_all.columns else pd.Series("", index=tx_all.index)
     victim_in = tx_all[pattern == "被害人匯入"]
-    methods = ("ai", "rules", "hybrid")
+    refs = cold_start_references(cfg)
+    switch_after = cfg["model"].get("cold_start", {}).get("switch_after", 50)
+    quota = cfg["report"].get("rule_quota", 0.1)
+    methods = ("ai", "rules", "hybrid", "dual") + tuple(refs)
     caught = {(k, m): set() for k in ks for m in methods}
     rows = []
     for T in batches:
         t0 = time.time()
-        tx = tx_all[tx_all["date"] < T].copy()
-        ids = pd.Index(pd.unique(pd.concat([tx["src"], tx["dst"]]))).difference(list(dl.EXTERNAL_IDS))
-        acc = acc_all.drop(columns="account_id").reindex(ids).rename_axis("account_id").reset_index()
-        rules, _ = run_rules(tx, acc, cfg["rules"])
-        X, _, _ = build_features(tx, acc, rules)
-        known = (acc.set_index("account_id")["alert_date"].reindex(X.index) < T).to_numpy()
+        acc, rules, X = _window(ds, T, cfg)
+        known = (acc["alert_date"] < T).to_numpy()
         y_known = pd.Series(known.astype(int), index=X.index)
-        truth = acc.set_index("account_id")["label"].reindex(X.index).fillna(0).astype(int).to_numpy()
-        s_rule = rule_rank_score(rules.reindex(X.index))
+        truth = acc["label"].fillna(0).astype(int).to_numpy()
+        s_rule = rule_rank_score(rules)
         if y_known.sum() >= 5:
             skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=cfg["model"]["random_state"])
             s_ai = oof_scores(lambda: _xgb(cfg["model"], y_known.to_numpy()), X, y_known, list(skf.split(X, y_known)))
@@ -170,17 +389,30 @@ def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200)):
             s_ai = s_rule.copy()
             mode = "規則（已知警示帳戶太少，模型尚無法訓練）"
         s_hyb = hybrid_score(s_ai, s_rule, cfg["model"].get("hybrid_weight_ai", 0.7))
-        scores = {"ai": s_ai, "rules": s_rule, "hybrid": s_hyb}
+        scores = {"ai": s_ai, "rules": s_rule, "hybrid": s_hyb, "dual": s_ai}
+        for name, ref in refs.items():
+            if known.sum() >= switch_after:
+                scores[name] = s_ai
+                continue
+            racc, _, RX = _window(ref, T, cfg)
+            ry = racc["alert_date"].notna().astype(int).to_numpy()
+            m = _xgb(cfg["model"], ry)
+            m.fit(RX, ry)
+            scores[name] = m.predict_proba(X.reindex(columns=RX.columns).fillna(0))[:, 1]
         hidden = int(truth[~known].sum())
         rec = {"batch": f"{T:%Y-%m-%d}", "n_accounts": int(len(X)), "n_known_alerts": int(known.sum()),
-               "hidden_mules": hidden, "mode": mode, "by_k": {}}
+               "hidden_mules": hidden, "mode": mode,
+               "cold_mode": "參考資料模型" if refs and known.sum() < switch_after else "自家模型", "by_k": {}}
         for k in ks:
             rec["by_k"][str(k)] = {}
             for who in methods:
                 done = caught[(k, who)]
                 cand = ~known & ~X.index.isin(list(done))
                 cid = X.index[cand]
-                order = np.argsort(-scores[who][cand], kind="stable")[:k]
+                if who == "dual":
+                    order = dual_list(s_ai[cand], s_rule[cand], k, quota)
+                else:
+                    order = np.argsort(-scores[who][cand], kind="stable")[:k]
                 picked = cid[order]
                 tp = [a for a in picked if acc_all.at[a, "label"] == 1]
                 done.update(tp)
@@ -194,8 +426,10 @@ def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200)):
                 }
             rec["by_k"][str(k)]["random"] = {"tp": hidden * k / max(int((~known).sum()), 1)}
         a = rec["by_k"]["100"]
+        extra = "".join(f"、冷啟動{'（分布不同）' if n == 'cold_shift' else ''} {a[n]['tp']:>3}" for n in refs)
         log(f"  {T:%Y-%m-%d}｜已知警示 {rec['n_known_alerts']:>3}｜尚未發現的人頭 {hidden:>3}｜覆核前 100 名抓到："
-            f"AI {a['ai']['tp']:>3}、規則 {a['rules']['tp']:>3}、雙層 {a['hybrid']['tp']:>3}（{time.time() - t0:.0f}s）")
+            f"AI {a['ai']['tp']:>3}、規則 {a['rules']['tp']:>3}、雙層 {a['hybrid']['tp']:>3}、雙名單 {a['dual']['tp']:>3}"
+            f"{extra}（{time.time() - t0:.0f}s）")
         rows.append(rec)
     summary = {}
     n_b = len(rows)
@@ -215,7 +449,9 @@ def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200)):
         summary[ks_]["random"] = {"unique_mules": sum(r["by_k"][ks_]["random"]["tp"] for r in rows)}
     summary["total_mules"] = int(acc_all["label"].sum())
     summary["victim_amount_total"] = float(victim_in["amount"].sum())
-    return {"batches": rows, "summary": summary}
+    return {"batches": rows, "summary": summary,
+            "settings": {"rule_quota": quota, "switch_after": switch_after,
+                         "cold_reference": cfg["model"].get("cold_start", {}).get("reference")}}
 
 
 # ---------------------------------------------------------------------------
@@ -244,9 +480,11 @@ def error_analysis(res: pd.DataFrame):
 
 
 # ---------------------------------------------------------------------------
-def run_evaluation(key: str, cfg: dict, quick: bool = False, log=print) -> dict:
+def run_evaluation(key: str, cfg: dict, quick: bool = False, stress: bool = False, log=print) -> dict:
     t_start = time.time()
     ds = dl.load_dataset(key, cfg["data"]["base_date"])
+    prev_path = OUT_DIR / key / "evaluation.json"
+    prev = json.loads(prev_path.read_text(encoding="utf-8")) if prev_path.exists() else {}
     run = load_run(key)
     X, res = run["X"], run["results"]
     y_true = res["label"].reindex(X.index).fillna(0).astype(int)
@@ -268,6 +506,35 @@ def run_evaluation(key: str, cfg: dict, quick: bool = False, log=print) -> dict:
         out["temporal"] = temporal_audit(ds, cfg, log)
     log("④ 誤判分析")
     out["errors"] = error_analysis(res)
+
+    if not quick:
+        log("⑤ 警示資料稀少時的成效（隨機只保留部分已警示帳戶訓練）")
+        out["label_scarcity"] = label_scarcity(X, y_true, y_train, folds, cfg["model"], log)
+        if "scheme" in res.columns:
+            log("⑥ 新手法測試（訓練時拿掉某一類詐騙，看能否找到）")
+            out["unseen"] = unseen_scheme(X, res.reindex(X.index), y_true, y_train, folds, cfg, log)
+    log("⑦ 規則保底名單（AI 名單外、參與資金循環達門檻的帳戶）")
+    top_k, n_min = cfg["report"]["top_k_review"], cfg["report"]["cycle_fallback_min"]
+    fb_args = dict(rule_quota=cfg["report"].get("rule_quota", 0.0), n_min=n_min)
+    out["fallback"] = {key: fallback_eval(res, top_k, **fb_args)}
+    alt = dl.RAW_DIR / "tw_sim_seed2"
+    if key == "tw_sim" and (alt / "transactions.csv.gz").exists() and run["model_path"]:
+        r2 = analyze(dl.load_twsim(alt, name="tw_sim_seed2"), cfg, model=load_model(run["model_path"]), log=lambda *_: None)
+        out["fallback"]["tw_sim_seed2"] = fallback_eval(r2["results"], top_k, **fb_args)
+    for name, fb in out["fallback"].items():
+        row = next(r for r in fb["rows"] if r["min_cycles"] == n_min)
+        extra = f"，其中循環交易 {row['cycle_mules']}/{fb['n_cycle_mules']}" if "cycle_mules" in row else ""
+        log(f"  {name}：門檻 {n_min} 次 → 名單 {row['n_queue']} 個、人頭 {row['mules']} 個{extra}")
+        s_ = fb["system"]
+        log(f"    完整流程（AI {s_['ai_list_n']}＋規則 {s_['rule_list_n']}＋保底 {s_['fallback_n']}）："
+            f"人頭 {s_['ai_list_mules']}＋{s_['rule_list_mules']}＋{s_['fallback_mules']}，"
+            f"循環交易 {s_['ai_list_cycle']}＋{s_['rule_list_cycle']}＋{s_['fallback_cycle']}（只用 AI 前 {top_k} 名：人頭 {s_['ai_only_mules']}）")
+
+    if key == "tw_sim" and stress:
+        log("⑧ 壓力測試（每個情境重新產生仿真資料，約 15 分鐘）")
+        out["stress"] = stress_test(cfg, log)
+    elif prev.get("stress"):
+        out["stress"] = prev["stress"]  # 沿用上次的壓力測試結果（加 --stress 重跑）
     out["elapsed_sec"] = round(time.time() - t_start, 1)
     dump_json(out, OUT_DIR / key / "evaluation.json")
     log(f"完成，耗時 {out['elapsed_sec']} 秒 → outputs/{key}/evaluation.json")
@@ -277,11 +544,12 @@ def run_evaluation(key: str, cfg: dict, quick: bool = False, log=print) -> dict:
 def main():
     ap = argparse.ArgumentParser(description="FlowAudit 嚴謹評估")
     ap.add_argument("--dataset", default=None, choices=list(dl.DATASETS))
-    ap.add_argument("--quick", action="store_true", help="略過逐月模擬")
+    ap.add_argument("--quick", action="store_true", help="略過逐月模擬與警示稀少測試")
+    ap.add_argument("--stress", action="store_true", help="重跑壓力測試（約 15 分鐘；未指定時沿用上次結果）")
     args = ap.parse_args()
     cfg = load_config()
     key = args.dataset or cfg["data"].get("default_dataset", "tw_sim")
-    run_evaluation(key, cfg, args.quick)
+    run_evaluation(key, cfg, args.quick, args.stress)
 
 
 if __name__ == "__main__":

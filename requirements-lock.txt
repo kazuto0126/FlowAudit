@@ -1,0 +1,16 @@
+# 產生 README「重點成果」數字時使用的套件版本（Python 3.12）。
+# 不同版本的 XGBoost／scikit-learn 會讓結果有小幅差異（例如 PR-AUC 第三位小數）；要重現數字請用：
+#   pip install -r requirements-lock.txt
+networkx==3.6.1
+numpy==2.5.3
+openpyxl==3.1.5
+pandas==3.0.6
+plotly==7.1.0
+pytest==9.1.1
+python-docx==1.2.0
+pyvis==0.3.2
+PyYAML==6.0.3
+requests==2.34.2
+scikit-learn==1.9.1
+streamlit==1.64.0
+xgboost==3.4.1

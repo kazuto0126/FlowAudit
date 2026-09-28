@@ -74,6 +74,42 @@ def test_simulator_small(tmp_path):
     assert r["rule_hits"].sum() > 0
 
 
+def test_simulator_stress_knobs(tmp_path):
+    from flowaudit.simulator import generate
+    small = {"months": 2, "n_office": 200, "n_student": 50, "n_retiree": 50, "n_self": 20, "n_landlord": 5,
+             "n_groupbuy": 3, "n_merchant": 20, "n_employer": 5, "n_supplier": 3, "n_utility": 2, "n_reactivated": 3,
+             "n_second": 30, "n_collector": 3, "n_family_mgr": 3, "n_seller": 5, "n_rosca": 3,
+             "fraud_groups": {"網購詐騙": 1}, "mule_source_p": [0.0, 0.0, 1.0], "p_test_tx": 0.0}
+    _, acc, _ = generate(tmp_path, cfg=small, verbose=False)
+    mules = acc[acc["label"] == 1]
+    assert len(mules) > 0 and (mules["mule_source"] == "出售帳戶").all()
+
+
+def test_cycle_fallback_excludes_ai_list():
+    from flowaudit.evaluation import fallback_eval
+    from flowaudit.model import cycle_fallback
+    res = pd.DataFrame({"risk_rank": [1, 2, 3, 4, 5], "risk_score": [0.9, 0.8, 0.7, 0.6, 0.5],
+                        "R4_cycles": [9, 0, 6, 2, 7], "label": [1, 0, 1, 0, 0],
+                        "scheme": ["循環交易", "", "循環交易", "", ""]}, index=list("ABCDE"))
+    q = cycle_fallback(res, top_k=2, min_cycles=5)
+    assert list(q.index) == ["E", "C"]  # A 已在 AI 名單內；依循環次數排序
+    fb = fallback_eval(res, top_k=2, ns=[5])
+    assert fb["n_cycle_mules"] == 2 and fb["cycle_in_ai_top_k"] == 1
+    assert fb["rows"][0] == {"min_cycles": 5, "n_queue": 2, "mules": 1, "precision": 0.5, "cycle_mules": 1}
+    s = fb["system"]
+    assert (s["ai_list_n"], s["rule_list_n"], s["fallback_n"], s["ai_only_mules"]) == (2, 0, 2, 1)
+    assert s["ai_list_cycle"] + s["fallback_cycle"] == 2
+
+
+def test_dual_list_reserves_rule_quota():
+    from flowaudit.model import dual_list
+    ai = np.array([0.9, 0.8, 0.7, 0.6, 0.1, 0.05])
+    rule = np.array([0.0, 0.0, 0.0, 0.0, 3.0, 5.0])
+    pick = dual_list(ai, rule, k=5, rule_quota=0.4)
+    assert list(pick) == [0, 1, 2, 5, 4]  # AI 前 3 名＋不在 AI 名單中規則分數最高的 2 個
+    assert list(dual_list(ai, rule, k=4, rule_quota=0.0)) == [0, 1, 2, 3]
+
+
 def test_temporal_cycle_requires_time_order():
     ok = _tx([("A", "B", 100, 1), ("B", "C", 90, 2), ("C", "A", 80, 3)])
     assert len(find_temporal_cycles(ok.transactions)) == 1
@@ -120,6 +156,21 @@ def test_amlworld_loader(tmp_path):
     assert ds.transactions["step"].tolist() == [0, 2]
 
 
+def test_amlworld_check_report(tmp_path):
+    from flowaudit.amlworld_check import write_report
+    at = [{"k": 100, "hits": 30, "precision": 0.3, "recall": 0.1}]
+    ok = {"summary": {"n_transactions": 800000, "n_accounts": 350000}, "elapsed_sec": 529.0, "peak_memory_gb": 2.2,
+          "steps": [{"step": "[1/4] 規則引擎全查 …", "sec": 160.0}], "n_cycles_found": 20000, "cycle_search_capped": True,
+          "metrics": {"positive_rate": 0.002, "model": {"pr_auc": 0.41, "at_k": at}, "rules": {"pr_auc": 0.12, "at_k": at}}}
+    env = {"os": "測試", "cpu_count": 4, "memory_gb": 16, "python": "3.12", "commit": "abc", "xgboost": "x",
+           "scikit-learn": "x", "pandas": "x", "numpy": "x", "networkx": "x"}
+    recs = [{"nrows": 1000000, "status": "完成", "wall_sec": 530, "result": ok},
+            {"nrows": None, "status": "失敗（結束代碼 1，常見原因是記憶體不足）", "wall_sec": 60, "result": None}]
+    write_report(recs, env, tmp_path / "HI-Small_Trans.csv", tmp_path)
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "**0.410**" in md and "前 1,000,000 列" in md and "全部資料 | 失敗" in md and "20,000 個上限" in md
+
+
 def test_generic_csv_and_scoring():
     run = _run_or_skip("tw_sim")
     from flowaudit.model import load_model
@@ -140,6 +191,13 @@ def test_reports():
     assert how == "template" and acct in md and "聲明" in md
     assert markdown_to_docx(md)[:2] == b"PK"
     assert build_workpaper(res, run["tx"], run["metrics"], run["summary"], 50)[:2] == b"PK"
+    wb = pd.ExcelFile(io.BytesIO(build_workpaper(res, run["tx"], run["metrics"], run["summary"], 50, fallback_min=5,
+                                                 rule_quota=0.1)))
+    assert {"規則保底名單(資金循環)", "規則名單(新手法保險)"} <= set(wb.sheet_names)
+    assert len(wb.parse("高風險帳戶清單")) == 45 and len(wb.parse("規則名單(新手法保險)")) == 5
+    from flowaudit.model import review_lists
+    ai_ids, rule_ids = review_lists(res, 50, 0.1)
+    assert not set(ai_ids) & set(rule_ids) and len(ai_ids) + len(rule_ids) == 50
 
 
 @pytest.mark.parametrize("key", ["tw_sim", "amlsim_fanin_cycle"])
@@ -155,6 +213,12 @@ def test_evaluation_outputs():
     s = ev["temporal"]["summary"]["100"]
     assert s["ai"]["unique_mules"] > s["rules"]["unique_mules"] > s["random"]["unique_mules"]
     assert ev["models"]["XGBoost（FlowAudit）"]["pr_auc"] > ev["models"]["現行規則計分"]["pr_auc"]
+    for k in ("規則加權（依警示資料學權重）", "XGBoost（只用 16 項規則指標）"):
+        assert k in ev["models"]
+    assert ev["label_scarcity"]["1"]["n_train_positive"] == ev["n_train_positive"]
+    assert "tw_sim" in ev["fallback"] and ev["fallback"]["tw_sim"]["rows"]
+    assert {"dual", "cold", "cold_shift"} <= set(s)
+    assert set(ev["unseen"]["schemes"]) == {"假投資", "網購詐騙", "解除分期"}
 
 
 def test_tw_report_mentions_reference():

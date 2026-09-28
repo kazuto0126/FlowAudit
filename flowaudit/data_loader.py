@@ -135,9 +135,11 @@ def load_twsim(folder: str | Path | None = None, name: str = "tw_sim") -> Datase
     if not (folder / "transactions.csv.gz").exists():
         from .simulator import generate
         generate(folder, verbose=False)
-    tx = pd.read_csv(folder / "transactions.csv.gz", parse_dates=["timestamp"], dtype={"device_id": str})
+    tx = pd.read_csv(folder / "transactions.csv.gz", parse_dates=["timestamp"], dtype={"device_id": str, "pattern": str})
     tx = tx.rename(columns={"timestamp": "date"})
     tx["device_id"] = tx["device_id"].fillna("")
+    if "pattern" in tx.columns:
+        tx["pattern"] = tx["pattern"].fillna("")
     acc = pd.read_csv(folder / "accounts.csv", parse_dates=["open_date", "alert_date"])
     for c in ("fraud_group", "scheme", "mule_source"):
         if c in acc.columns:
