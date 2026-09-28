@@ -32,12 +32,16 @@ python -m pytest -q                                   # 測試，改完程式一
 - `app.py`：Streamlit 儀表板（7 頁）
 - `config.yaml`：規則門檻與模型參數；調整門檻改這裡，不要寫死在程式裡
 - `docs/仿真設計與參數依據.md`：仿真參數與出處
+- `docs/報告書/`：競賽企劃書（Word、PDF，章節依簡章附件 2）。改報告書請改 `產生程式/build_report.py` 再重新產生：
+  `make_assets.py`（圖表、截圖裁切）→ `build_report.py`（Word，數字讀 evaluation.json 並自動核對）→
+  `finalize.ps1`（用 Word 更新目錄、移除作者等個人資訊、轉 PDF）；截圖原檔由 `capture_shots.py` 擷取
 
 ## 必須遵守的規則
 
 1. **不可有標籤外洩**：特徵與規則只能用交易資料和 `ACCOUNT_ATTRS`（customer_type、open_date、dormant_days_before）。`GROUND_TRUTH_COLS`（role、fraud_group、scheme、mule_layer、mule_source、alert_date）和 `label` 只能用於訓練標籤與評估。
 2. **訓練標籤貼近實務**：`model.train_label: alerted` 表示只用「已被警示」的帳戶訓練，評估時用全部真實人頭帳戶。不要改回用全部標籤訓練。
-3. **競賽匿名規定**：程式、介面、報告、README 都不能出現姓名、學號、學校名稱。
+3. **競賽匿名規定**：程式、介面、報告、README 都不能出現姓名、學號、學校名稱。Word 另存時會把使用者姓名寫進
+   「作者／最後儲存者」，Office 檔一律經 `finalize.ps1` 輸出，交付前檢查 `docProps/core.xml`。
 4. **介面與文件用繁體中文**，用語要讓稽核／會計背景的評審看得懂。
 5. **誠實呈現結果**：資料是合成資料，要保留相關說明；不要為了數字好看而調參後只報好的結果。
 6. **不要 commit 執行產生的檔案**：`outputs/` 只保留 `outputs/tw_sim/evaluation.json`，其他已被 `.gitignore` 排除；不要把 `.env` 或任何 API 金鑰寫進程式。

@@ -4,9 +4,10 @@
    同一套集團層級交叉驗證切分，附 bootstrap 95% 信賴區間。
 2. 消融實驗：逐一拿掉（或只用）某一類特徵，看成效掉多少 → 哪類特徵真正有貢獻。
 3. 逐月持續稽核模擬（時間切分）：每月初只用「當時已有」的交易與「當時已知」的警示帳戶訓練，
-   對尚未被警示的帳戶排序、覆核前 K 名，計算抓到幾個、平均提前幾天、可攔阻多少被害款項。
-4. 成本效益：覆核人力時數與成本 vs. 攔阻金額。
-5. 誤判分析：被誤判的是哪些正常帳戶、漏掉的是哪種人頭帳戶。
+   對尚未被警示的帳戶排序、覆核前 K 名，計算抓到幾個、平均提前幾天、潛在攔阻金額
+   （含調查延遲 0、1、3、7 天才凍結的敏感度分析）。
+4. 成本效益：覆核人力時數與成本 vs. 潛在攔阻金額。
+5. 誤判分析：被誤判的是哪些正常帳戶、漏掉的是哪種人頭帳戶；AI 與規則在「相同覆核量」「相同找回率」下的公平比較。
 6. 警示資料稀少：銀行只知道一小部分警示帳戶時，模型還剩多少成效。
 7. 新手法測試：訓練時拿掉某一類詐騙，AI 能否找到；新手法累積幾個警示帳戶後模型能學會；各排序策略的取捨。
 8. 規則保底名單：AI 名單外、參與資金循環達門檻的帳戶，各門檻的名單大小與命中情形（含外部資料）。
@@ -347,12 +348,15 @@ def cold_start_references(cfg: dict) -> dict:
     return {"cold": dl.load_twsim(ref, name=name), "cold_shift": dl.load_twsim(shift, name=f"stress_{shift.name}")}
 
 
-def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200)):
+def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200), delays=(0, 1, 3, 7)):
     """逐月持續稽核模擬。
 
     每個批次日 T（每月 1 日）：只用 T 之前的交易、T 之前已被警示的帳戶訓練模型，
     對「尚未被警示、也尚未被本系統抓到」的帳戶排序，覆核前 K 名。
     被覆核確認的人頭帳戶視為當天凍結：之後的被害人匯款可被攔阻，且不會在下個月重複計算。
+    潛在攔阻金額只計「被害人直接匯入」該帳戶的款項，不計人頭帳戶之間的轉帳，同一筆錢不會重複計算；
+    另計調查延遲 delays 天後才凍結的情形（凍結前被警方通報的帳戶，資料中已無之後的匯款）。
+    這是仿真情境下的上限：實際上集團可能改用其他帳戶收款。
 
     比較的排序方式：ai（自家模型）、rules（現行規則）、hybrid（規則＋AI 加權）、
     dual（雙名單：保留 rule_quota 名額給規則）、cold／cold_shift（冷啟動：自家警示不足時改用參考資料訓練的模型）。
@@ -418,11 +422,13 @@ def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200)):
                 done.update(tp)
                 al = acc_all.loc[tp, "alert_date"]
                 lead = (al.dropna() - T).dt.days
-                prevented = float(victim_in[victim_in["dst"].isin(tp) & (victim_in["date"] >= T)]["amount"].sum())
+                v = victim_in[victim_in["dst"].isin(tp)]
+                by_delay = {str(d): float(v.loc[v["date"] >= T + pd.Timedelta(days=d), "amount"].sum()) for d in delays}
                 rec["by_k"][str(k)][who] = {
                     "tp": len(tp), "precision": len(tp) / k, "hidden_available": int(truth[cand].sum()),
                     "caught_before_alert": int(len(lead)), "lead_days_sum": float(lead.sum()),
-                    "never_alerted": int(al.isna().sum()), "prevented_amount": prevented,
+                    "never_alerted": int(al.isna().sum()), "prevented_amount": by_delay["0"],
+                    "prevented_by_delay": by_delay,
                 }
             rec["by_k"][str(k)]["random"] = {"tp": hidden * k / max(int((~known).sum()), 1)}
         a = rec["by_k"]["100"]
@@ -445,12 +451,13 @@ def temporal_audit(ds: dl.Dataset, cfg: dict, log, ks=(50, 100, 200)):
                 "lead_days_mean": sum(x["lead_days_sum"] for x in g) / n_before if n_before else None,
                 "never_alerted": sum(x["never_alerted"] for x in g),
                 "prevented_amount": sum(x["prevented_amount"] for x in g),
+                "prevented_by_delay": {str(d): sum(x["prevented_by_delay"][str(d)] for x in g) for d in delays},
             }
         summary[ks_]["random"] = {"unique_mules": sum(r["by_k"][ks_]["random"]["tp"] for r in rows)}
     summary["total_mules"] = int(acc_all["label"].sum())
     summary["victim_amount_total"] = float(victim_in["amount"].sum())
     return {"batches": rows, "summary": summary,
-            "settings": {"rule_quota": quota, "switch_after": switch_after,
+            "settings": {"rule_quota": quota, "switch_after": switch_after, "freeze_delays": list(delays),
                          "cold_reference": cfg["model"].get("cold_start", {}).get("reference")}}
 
 
@@ -479,6 +486,76 @@ def error_analysis(res: pd.DataFrame):
     return out
 
 
+def _tie_blocks(score, y):
+    """依分數由高到低分組（同分為一組），回傳各組帳戶數與人頭帳戶數。同分帳戶的覆核順序視為隨機，以期望值計算。"""
+    g = pd.DataFrame({"s": np.asarray(score, float), "y": np.asarray(y, int)}).groupby("s").agg(
+        n=("y", "size"), m=("y", "sum")).iloc[::-1]
+    return g["n"].to_numpy(), g["m"].to_numpy()
+
+
+def expected_hits(score, y, k: int) -> float:
+    """依分數覆核前 k 個帳戶時，找到的人頭帳戶數（期望值）。"""
+    n, m = _tie_blocks(score, y)
+    cn = np.cumsum(n)
+    i = int(np.searchsorted(cn, k))
+    if i >= len(n):
+        return float(m.sum())
+    above = int(cn[i - 1]) if i else 0
+    return float(m[:i].sum() + (k - above) * m[i] / n[i])
+
+
+def expected_reviews(score, y, need: int) -> float | None:
+    """要找到 need 個人頭帳戶，依分數需要覆核幾個帳戶（期望值）；分數為 0 的帳戶視為不會被覆核，達不到時回傳 None。"""
+    n, m = _tie_blocks(score, y)
+    s = np.sort(np.unique(np.asarray(score, float)))[::-1]
+    cm = np.cumsum(m)
+    i = int(np.searchsorted(cm, need))
+    if i >= len(n) or s[i] <= 0:
+        return None
+    j = need - (int(cm[i - 1]) if i else 0)
+    return float(n[:i].sum() + j * (n[i] + 1) / (m[i] + 1))  # 組內隨機順序時，第 j 個人頭帳戶的期望位置
+
+
+def fair_comparison(res: pd.DataFrame, ks=(100, 200, 500), recalls=(0.5, 0.8, 0.9), curve_max=1000, curve_step=10) -> dict:
+    """公平比較：AI 與規則在「相同覆核量」與「相同找回率」下，各找到多少人頭帳戶、誤查多少正常帳戶。
+
+    規則有兩種用法：依規則分數排序、與 AI 覆核同樣多的帳戶；以及把「命中任一規則」的帳戶全部列為可疑，
+    後者另列 AI 覆核同樣多帳戶時的結果。同分帳戶的覆核順序視為隨機（取期望值），分數為 0 的帳戶視為規則不會覆核。
+    """
+    y = res["label"].fillna(0).astype(int).to_numpy()
+    n_pos = int(y.sum())
+    scores = {"ai": res["risk_score"].to_numpy(float), "rules": rule_rank_score(res)}
+    out = {"n_accounts": int(len(y)), "n_mules": n_pos, "by_k": [], "equal_recall": []}
+    for k in sorted({int(k) for k in (*ks, n_pos)}):
+        row = {"k": k, "random_mules": n_pos * k / len(y)}
+        for m, s in scores.items():
+            hits = expected_hits(s, y, k)
+            row[m] = {"mules": hits, "normal": k - hits}
+        out["by_k"].append(row)
+    hit = (res["rule_hits"] > 0).to_numpy()
+    n_hit = int(hit.sum())
+    ai_hits = expected_hits(scores["ai"], y, n_hit)
+    out["any_rule"] = {"n": n_hit, "mules": int(y[hit].sum()), "normal": int((hit & (y == 0)).sum()),
+                       "ai_same_k": {"mules": ai_hits, "normal": n_hit - ai_hits}}
+    for r in recalls:
+        need = int(np.ceil(r * n_pos))
+        row = {"recall": r, "mules": need}
+        for m, s in scores.items():
+            rev = expected_reviews(s, y, need)
+            row[m] = None if rev is None else {"reviewed": rev, "normal": rev - need}
+        out["equal_recall"].append(row)
+    grid = list(range(0, min(curve_max, len(y)) + 1, curve_step))
+    out["curve"] = {"k": grid, **{m: [expected_hits(s, y, k) if k else 0.0 for k in grid] for m, s in scores.items()}}
+    if "role" in res.columns:
+        # 覆核量＝人頭帳戶總數時，名單中的正常帳戶是哪些類型
+        neg, role = y == 0, res["role"].to_numpy()
+        out["normal_by_role_at_n_pos"] = {}
+        for m, s in scores.items():
+            top = np.argsort(-s, kind="stable")[:n_pos]
+            out["normal_by_role_at_n_pos"][m] = pd.Series(role[top[neg[top]]]).value_counts().to_dict()
+    return out
+
+
 # ---------------------------------------------------------------------------
 def run_evaluation(key: str, cfg: dict, quick: bool = False, stress: bool = False, log=print) -> dict:
     t_start = time.time()
@@ -504,8 +581,20 @@ def run_evaluation(key: str, cfg: dict, quick: bool = False, stress: bool = Fals
     if ds.has_alert_dates and ds.has_time and not quick:
         log("③ 逐月持續稽核模擬（只用當時已有的資料與已知警示帳戶）")
         out["temporal"] = temporal_audit(ds, cfg, log)
-    log("④ 誤判分析")
+        s100 = out["temporal"]["summary"]["100"]
+        for who, name in (("ai", "AI"), ("rules", "規則"), ("cold", "冷啟動")):
+            if who in s100:
+                d = s100[who]["prevented_by_delay"]
+                log(f"  潛在攔阻金額（{name}，每月覆核 100 個）：" + "、".join(
+                    f"延遲 {k} 天 {v / 1e4:,.0f} 萬" for k, v in d.items()))
+    log("④ 誤判分析與公平比較（相同覆核量、相同找回率）")
     out["errors"] = error_analysis(res)
+    out["fair"] = fair = fair_comparison(res)
+    for row in fair["by_k"]:
+        log(f"  覆核 {row['k']:>4} 個：AI 找到 {row['ai']['mules']:.0f}（誤查正常 {row['ai']['normal']:.0f}）｜"
+            f"規則 {row['rules']['mules']:.0f}（{row['rules']['normal']:.0f}）｜隨機 {row['random_mules']:.1f}")
+    a = fair["any_rule"]
+    log(f"  命中任一規則 {a['n']:,} 個：人頭 {a['mules']}、正常 {a['normal']:,}｜AI 覆核同樣多：人頭 {a['ai_same_k']['mules']:.0f}")
 
     if not quick:
         log("⑤ 警示資料稀少時的成效（隨機只保留部分已警示帳戶訓練）")

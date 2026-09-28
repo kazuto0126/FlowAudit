@@ -101,6 +101,25 @@ def test_cycle_fallback_excludes_ai_list():
     assert s["ai_list_cycle"] + s["fallback_cycle"] == 2
 
 
+def test_fair_comparison_same_volume_and_ties():
+    from flowaudit.evaluation import fair_comparison
+    res = pd.DataFrame({"risk_score": [0.9, 0.8, 0.7, 0.6, 0.5, 0.4], "label": [1, 1, 0, 1, 0, 0],
+                        "rule_hits": [2, 0, 2, 1, 0, 0], "R1_event_amount_share": 0.0, "R4_cycles": 0,
+                        "role": ["人頭", "人頭", "個人賣家", "人頭", "上班族", "上班族"]}, index=list("ABCDEF"))
+    f = fair_comparison(res, ks=(1, 4), recalls=(0.5, 1.0), curve_max=6, curve_step=1)
+    by_k = {r["k"]: r for r in f["by_k"]}
+    assert set(by_k) == {1, 3, 4}  # 另加覆核量＝人頭帳戶總數
+    assert by_k[1]["rules"]["mules"] == 0.5  # 規則分數同分的 A、C 各有一半機會先被覆核
+    assert by_k[4]["rules"]["mules"] == pytest.approx(2 + 1 / 3)
+    assert by_k[3]["ai"] == {"mules": 2.0, "normal": 1.0}
+    assert f["any_rule"] == {"n": 3, "mules": 2, "normal": 1, "ai_same_k": {"mules": 2.0, "normal": 1.0}}
+    half, full = f["equal_recall"]
+    assert half["ai"] == {"reviewed": 2.0, "normal": 0.0} and half["rules"] == {"reviewed": 3.0, "normal": 1.0}
+    assert full["rules"] is None and full["ai"]["reviewed"] == 4.0  # B 沒有命中規則，規則覆核不到
+    assert f["normal_by_role_at_n_pos"] == {"ai": {"個人賣家": 1}, "rules": {"個人賣家": 1}}
+    assert f["curve"]["ai"][:3] == [0.0, 1.0, 2.0]
+
+
 def test_dual_list_reserves_rule_quota():
     from flowaudit.model import dual_list
     ai = np.array([0.9, 0.8, 0.7, 0.6, 0.1, 0.05])
@@ -219,6 +238,11 @@ def test_evaluation_outputs():
     assert "tw_sim" in ev["fallback"] and ev["fallback"]["tw_sim"]["rows"]
     assert {"dual", "cold", "cold_shift"} <= set(s)
     assert set(ev["unseen"]["schemes"]) == {"假投資", "網購詐騙", "解除分期"}
+    # 調查延遲越久，潛在攔阻金額只會越少；延遲 0 天即原本的數字
+    d = s["ai"]["prevented_by_delay"]
+    assert d["0"] == s["ai"]["prevented_amount"] >= d["1"] >= d["3"] >= d["7"]
+    by_k = {r["k"]: r for r in ev["fair"]["by_k"]}
+    assert by_k[ev["n_true_positive"]]["ai"]["mules"] > by_k[ev["n_true_positive"]]["rules"]["mules"]
 
 
 def test_tw_report_mentions_reference():

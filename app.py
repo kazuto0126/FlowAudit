@@ -184,8 +184,8 @@ def page_overview():
         st.success(
             f"**逐月持續稽核模擬（最接近實務的評估）**：每月只覆核風險最高的 100 個帳戶，{n_b} 個月共找出 "
             f"**{ai['unique_mules']} 個人頭帳戶**（規則只找到 {rl['unique_mules']} 個）；其中 {ai['caught_before_alert']} 個"
-            f"比警方通報**平均早 {ai['lead_days_mean']:.0f} 天**，可攔阻被害款項 **{money(ai['prevented_amount'])}**"
-            f"（規則 {money(rl['prevented_amount'])}）。詳見「模型評估」頁。", icon="📈")
+            f"比警方通報**平均早 {ai['lead_days_mean']:.0f} 天**，潛在攔阻金額 **{money(ai['prevented_amount'])}**"
+            f"（規則 {money(rl['prevented_amount'])}；仿真情境、確認當天凍結的上限估計）。詳見「模型評估」頁。", icon="📈")
 
     if m:
         st.subheader("同樣的人力，能找到多少人頭帳戶？")
@@ -234,7 +234,7 @@ def page_overview():
             })
             st.dataframe(tbl.style.format({"PR-AUC": "{:.3f}", "ROC-AUC": "{:.3f}"}), hide_index=True, use_container_width=True)
             if m.get("external_validation"):
-                st.markdown("**外部驗證**：模型不重新訓練，直接套用到從未見過的資料")
+                st.markdown("**仿真穩健性測試**：模型不重新訓練，直接套用到另一份從未見過的資料")
                 ev_ = pd.DataFrame([{"資料集": dl.DATASETS.get(k, "另一份仿真資料（不同隨機種子）" if k == "tw_sim_seed2" else k),
                                      "AI PR-AUC": v["model_pr_auc"], "規則 PR-AUC": v["rules_pr_auc"], "隨機基準": v["positive_rate"]}
                                     for k, v in m["external_validation"].items()])
@@ -558,7 +558,8 @@ def page_evaluation():
         else:
             tp = ev["temporal"]
             st.markdown("每月 1 日執行一次全查：**只用當時已有的交易**、**只知道當時已被警示的帳戶**，"
-                        "對尚未被警示的帳戶排序並覆核前 K 名。被確認的人頭帳戶視為當天凍結，之後流入的被害款項即可攔阻。")
+                        "對尚未被警示的帳戶排序並覆核前 K 名。被確認的人頭帳戶視為當天凍結，之後被害人直接匯入的款項"
+                        "計為**潛在攔阻金額**（仿真情境下的上限：實際上集團可能改用其他帳戶收款）。")
             k = st.radio("每月覆核帳戶數 K", ["50", "100", "200"], index=1, horizontal=True)
             s = tp["summary"][k]
             n_b = len(tp["batches"])
@@ -568,7 +569,7 @@ def page_evaluation():
             kpi(c[1], "比警方通報更早發現", f"{s['ai']['caught_before_alert']} 個",
                 f"平均早 {s['ai']['lead_days_mean']:.0f} 天" if s["ai"]["lead_days_mean"] else None)
             kpi(c[2], "期間內從未被通報、由系統找出", f"{s['ai']['never_alerted']} 個", "警方尚未發現的人頭帳戶")
-            kpi(c[3], "可攔阻的被害款項", money(s["ai"]["prevented_amount"]), f"規則 {money(s['rules']['prevented_amount'])}")
+            kpi(c[3], "潛在攔阻金額", money(s["ai"]["prevented_amount"]), f"規則 {money(s['rules']['prevented_amount'])}")
             rows = tp["batches"]
             fig = go.Figure()
             for who, name, col in (("ai", "AI 模型", C_AI), ("rules", "傳統規則", C_RULE)):
@@ -584,9 +585,9 @@ def page_evaluation():
             tbl = pd.DataFrame([{
                 "批次日": r["batch"], "已知警示帳戶": r["n_known_alerts"], "尚未被發現的人頭": r["hidden_mules"],
                 "AI 找到": r["by_k"][k]["ai"]["tp"], "規則找到": r["by_k"][k]["rules"]["tp"],
-                "AI 可攔阻金額": r["by_k"][k]["ai"]["prevented_amount"], "排序方式": r["mode"]} for r in rows])
+                "AI 潛在攔阻金額": r["by_k"][k]["ai"]["prevented_amount"], "排序方式": r["mode"]} for r in rows])
             st.dataframe(tbl, hide_index=True, use_container_width=True,
-                         column_config={"AI 可攔阻金額": st.column_config.NumberColumn(format="%.0f")})
+                         column_config={"AI 潛在攔阻金額": st.column_config.NumberColumn(format="%.0f")})
             st.caption("前兩個月已知警示帳戶很少，AI 與規則差不多（已知警示帳戶不到 5 個時自動改用規則排序）；"
                        "警示資料累積後 AI 明顯超越規則。導入初期的空窗可用下方的「冷啟動」補上。"
                        "同一帳戶被找到後即凍結，不會在之後月份重複計算。")
@@ -604,14 +605,22 @@ def page_evaluation():
                 st.markdown(f"**解決方案比較**（每月覆核 {k} 個帳戶，{n_b} 個月合計）")
                 st.dataframe(pd.DataFrame([{
                     "排序方式": name, "找到人頭帳戶": s[w]["unique_mules"], "比警方通報更早": s[w]["caught_before_alert"],
-                    "可攔阻被害款項": s[w]["prevented_amount"]} for w, name in options if w in s]),
+                    "潛在攔阻金額": s[w]["prevented_amount"]} for w, name in options if w in s]),
                     hide_index=True, use_container_width=True,
-                    column_config={"可攔阻被害款項": st.column_config.NumberColumn(format="%.0f")})
+                    column_config={"潛在攔阻金額": st.column_config.NumberColumn(format="%.0f")})
                 st.caption(f"**冷啟動**：自家已知警示帳戶不到 {setting.get('switch_after', 50)} 個時，先用外部參考資料（代表同業或主管機關分享、"
                            "已完成調查的資料）訓練的模型，之後改用自家模型。導入初期正是最能攔阻被害款項的時候，警示資料卻最少，"
                            "冷啟動補上這段空窗。參考資料與自家資料都是同一個仿真器產生，實際效果會比表中低；"
                            "「分布不同」一列改用人頭帳戶行為差異很大的壓力測試資料當參考，是較保守的估計。"
                            "**雙名單**是新詐騙手法出現時的保險，說明見「新手法測試」。")
+            if "prevented_by_delay" in s["ai"]:
+                st.markdown(f"**調查延遲的影響**：確認後隔幾天才凍結，潛在攔阻金額剩多少（每月覆核 {k} 個帳戶）")
+                delays = list(s["ai"]["prevented_by_delay"])
+                st.dataframe(pd.DataFrame([{"排序方式": name, **{f"延遲 {d} 天": s[w]["prevented_by_delay"][d] for d in delays}}
+                                           for w, name in options if w in s]), hide_index=True, use_container_width=True,
+                             column_config={f"延遲 {d} 天": st.column_config.NumberColumn(format="%.0f") for d in delays})
+                st.caption("只計算被害人直接匯入人頭帳戶的款項，不計人頭帳戶之間的轉帳，同一筆錢不會重複計算；"
+                           "調查期間帳戶若已被警方通報凍結，之後就沒有可攔阻的款項。")
 
     # --- 成本效益
     with tabs[1]:
@@ -633,24 +642,26 @@ def page_evaluation():
                 rows.append({"方法": name, "覆核帳戶數": n_rev, "人工時數": hours, "人力成本（元）": cost,
                              "找到人頭帳戶": x["unique_mules"],
                              "每找到一個的成本（元）": cost / x["unique_mules"] if x["unique_mules"] else None,
-                             "可攔阻被害款項（元）": x["prevented_amount"],
-                             "攔阻金額／人力成本": x["prevented_amount"] / cost if cost else None})
+                             "潛在攔阻金額（元）": x["prevented_amount"],
+                             "潛在攔阻金額／人力成本": x["prevented_amount"] / cost if cost else None})
             rnd = s["random"]["unique_mules"]
             rows.append({"方法": "隨機抽樣", "覆核帳戶數": n_rev, "人工時數": hours, "人力成本（元）": cost,
                          "找到人頭帳戶": round(rnd, 1), "每找到一個的成本（元）": cost / rnd if rnd else None,
-                         "可攔阻被害款項（元）": np.nan, "攔阻金額／人力成本": np.nan})
+                         "潛在攔阻金額（元）": np.nan, "潛在攔阻金額／人力成本": np.nan})
             df = pd.DataFrame(rows)
             st.dataframe(df, hide_index=True, use_container_width=True, column_config={
                 "人工時數": st.column_config.NumberColumn(format="%.0f"),
                 "人力成本（元）": st.column_config.NumberColumn(format="%.0f"),
                 "每找到一個的成本（元）": st.column_config.NumberColumn(format="%.0f"),
-                "可攔阻被害款項（元）": st.column_config.NumberColumn(format="%.0f"),
-                "攔阻金額／人力成本": st.column_config.NumberColumn(format="%.1f 倍")})
+                "潛在攔阻金額（元）": st.column_config.NumberColumn(format="%.0f"),
+                "潛在攔阻金額／人力成本": st.column_config.NumberColumn(format="%.1f 倍")})
             ai = rows[0]
             st.success(f"每月覆核 {k2} 個帳戶、每件 {minutes} 分鐘，{len(ev['temporal']['batches'])} 個月約需 {hours:,.0f} 小時"
-                       f"（{money(cost)}），AI 可找出 {ai['找到人頭帳戶']} 個人頭帳戶、攔阻 {money(ai['可攔阻被害款項（元）'])} 被害款項，"
-                       f"約為人力成本的 {ai['攔阻金額／人力成本']:.0f} 倍。")
-            st.caption("攔阻金額＝被系統找出後，原本還會流入該人頭帳戶的被害人匯款（仿真資料計算）。未計入避免的商譽損失與裁罰。")
+                       f"（{money(cost)}），AI 可找出 {ai['找到人頭帳戶']} 個人頭帳戶，潛在攔阻金額 {money(ai['潛在攔阻金額（元）'])}，"
+                       f"約為覆核人力成本的 {ai['潛在攔阻金額／人力成本']:.0f} 倍。")
+            st.caption("潛在攔阻金額＝被系統找出並當天凍結後，原本還會由被害人直接匯入該人頭帳戶的款項（仿真資料計算，"
+                       "為上限：集團可能改用其他帳戶；調查延遲的影響見「逐月持續稽核模擬」）。此比值只是粗估，"
+                       "未計入系統建置、誤報處理與後續調查成本，不是投資報酬率。")
 
     # --- 多模型比較
     with tabs[2]:
@@ -709,21 +720,49 @@ def page_evaluation():
     # --- 誤判
     with tabs[4]:
         er = ev["errors"]
+        fair = ev.get("fair")
+        if fair:
+            st.markdown("**公平比較：覆核同樣多的帳戶**（AI 與規則都依分數由高到低覆核）")
+            st.dataframe(pd.DataFrame([{
+                "覆核帳戶數": r["k"], "AI 找到人頭帳戶": r["ai"]["mules"], "AI 誤查正常帳戶": r["ai"]["normal"],
+                "規則找到人頭帳戶": r["rules"]["mules"], "規則誤查正常帳戶": r["rules"]["normal"],
+                "隨機抽樣（期望值）": r["random_mules"]} for r in fair["by_k"]]).style.format(
+                {c_: "{:,.0f}" for c_ in ("AI 找到人頭帳戶", "AI 誤查正常帳戶", "規則找到人頭帳戶", "規則誤查正常帳戶")}
+                | {"隨機抽樣（期望值）": "{:.1f}"}), hide_index=True, use_container_width=True)
+            st.markdown("**要找到同樣比例的人頭帳戶，各需覆核多少帳戶**")
+            st.dataframe(pd.DataFrame([{
+                "找回比例": f"{r['recall']:.0%}（{r['mules']} 個）",
+                "AI 需覆核": r["ai"]["reviewed"] if r["ai"] else None, "AI 誤查正常": r["ai"]["normal"] if r["ai"] else None,
+                "規則需覆核": r["rules"]["reviewed"] if r["rules"] else None,
+                "規則誤查正常": r["rules"]["normal"] if r["rules"] else None} for r in fair["equal_recall"]]).style.format(
+                "{:,.0f}", subset=["AI 需覆核", "AI 誤查正常", "規則需覆核", "規則誤查正常"], na_rep="做不到"),
+                hide_index=True, use_container_width=True)
+            a = fair["any_rule"]
+            st.caption(f"若把「命中任一規則」的帳戶全部列為可疑（規則的另一種用法），共 {a['n']:,} 個帳戶，其中人頭帳戶 {a['mules']} 個、"
+                       f"正常帳戶 {a['normal']:,} 個；AI 覆核同樣多的帳戶可找到 {a['ai_same_k']['mules']:.0f} 個人頭帳戶。"
+                       "規則分數同分的帳戶覆核順序視為隨機（取期望值）。")
+            nr = fair.get("normal_by_role_at_n_pos", {})
+            if nr:
+                roles = sorted(set(nr["ai"]) | set(nr["rules"]), key=lambda r_: -nr["rules"].get(r_, 0) - nr["ai"].get(r_, 0))
+                fig = go.Figure()
+                for who, name, col in (("rules", "傳統規則", C_RULE), ("ai", "AI 模型", C_AI)):
+                    fig.add_trace(go.Bar(y=roles, x=[nr[who].get(r_, 0) for r_ in roles], orientation="h", name=name,
+                                         marker_color=col, hovertemplate=f"{name}：%{{y}} %{{x}} 個<extra></extra>"))
+                fig.update_layout(barmode="group")
+                st.markdown(f"**覆核前 {fair['n_mules']} 名（＝人頭帳戶總數）時，名單中的正常帳戶是哪些類型**")
+                fig.update_xaxes(title="名單中的正常帳戶數")
+                fig.update_yaxes(autorange="reversed")
+                st.plotly_chart(style_fig(fig, 80 + 30 * len(roles)), use_container_width=True)
         if er.get("fp_rate_by_role"):
-            st.markdown(f"「AI 誤判」＝正常帳戶進入風險前 {er['k']} 名；「規則誤判」＝正常帳戶命中任一規則。")
-            fr = pd.DataFrame([{"帳戶類型": k, "帳戶數": v["n"], "規則誤判率": v["rules"], "AI 誤判率": v["ai"]}
-                               for k, v in er["fp_rate_by_role"].items()]).sort_values("規則誤判率", ascending=False)
-            fig = go.Figure()
-            fig.add_trace(go.Bar(y=fr["帳戶類型"], x=fr["規則誤判率"], orientation="h", name="傳統規則", marker_color=C_RULE,
-                                 hovertemplate="%{y}：規則誤判 %{x:.1%}<extra></extra>"))
-            fig.add_trace(go.Bar(y=fr["帳戶類型"], x=fr["AI 誤判率"], orientation="h", name="AI 模型", marker_color=C_AI,
-                                 hovertemplate="%{y}：AI 誤判 %{x:.1%}<extra></extra>"))
-            fig.update_layout(barmode="group")
-            st.markdown("**規則把大量正常帳戶當成可疑，AI 誤判少得多**")
-            fig.update_xaxes(title="被誤判為可疑的比例", tickformat=".0%")
-            fig.update_yaxes(autorange="reversed")
-            st.plotly_chart(style_fig(fig, 80 + 30 * len(fr)), use_container_width=True)
-            st.caption("團購主、代收班費、標會會頭、個人賣家、發薪公司等，行為與人頭帳戶相似但完全正常，是規則誤報的主要來源。")
+            with st.expander("各類正常帳戶命中任一規則的比例（規則全部覆核時的誤報來源）"):
+                fr = pd.DataFrame([{"帳戶類型": k, "帳戶數": v["n"], "命中任一規則": v["rules"],
+                                    f"進入 AI 前 {er['k']} 名": v["ai"]}
+                                   for k, v in er["fp_rate_by_role"].items()]).sort_values("命中任一規則", ascending=False)
+                st.dataframe(fr.style.format({"命中任一規則": "{:.1%}", f"進入 AI 前 {er['k']} 名": "{:.1%}"}),
+                             hide_index=True, use_container_width=True)
+                st.caption("兩欄的覆核量不同（命中任一規則的帳戶遠多於 AI 名單），只用來看規則誤報來自哪些正常帳戶，"
+                           "不能直接比較兩者的誤報率；公平比較請看上方表格。團購主、代收款項、標會會頭、個人賣家、發薪公司等，"
+                           "行為與人頭帳戶相似但完全正常。")
         c = st.columns(2)
         if er.get("recall_by_scheme"):
             c[0].markdown(f"**各詐騙類型的檢出率**（前 {er['k']} 名）")
