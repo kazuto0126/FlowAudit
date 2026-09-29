@@ -34,6 +34,12 @@ CM = 1 / 2.54
 ev = json.loads((ROOT / "outputs/tw_sim/evaluation.json").read_text(encoding="utf-8"))
 
 
+def save(fig, name):
+    """報告書用 PNG；海報另用 SVG（向量，放大列印不失真）。"""
+    fig.savefig(OUT / f"{name}.png", facecolor="white")
+    fig.savefig(OUT / f"{name}.svg", facecolor="white")
+
+
 def canvas(w_cm, h_cm):
     """以公分為座標的畫布：字級（pt）與方框（cm）的比例固定，不會因縮放而擠出方框。"""
     fig = plt.figure(figsize=(w_cm * CM, h_cm * CM))
@@ -98,7 +104,7 @@ def architecture():
     # 回饋
     arrow(ax, (11.4, 2.6), (11.4, 4.4), color=C_GRAY, ls="--")
     text(ax, 11.55, 3.5, "覆核結論回饋\n每月重新訓練", size=7, color=SUB, ha="left")
-    fig.savefig(OUT / "fig_architecture.png", facecolor="white")
+    save(fig, "fig_architecture")
     plt.close(fig)
 
 
@@ -118,7 +124,7 @@ def workflow():
     last = x0 + 4 * (w + gap) + w / 2
     arrow(ax, (last, 1.7), (x0 + w / 2, 1.7), rad=-0.12, ls="--", color=C_GRAY)
     text(ax, 8.0, 0.25, "確認的人頭帳戶加入訓練資料，下個月的模型更準（持續稽核）", size=7.5, color=SUB)
-    fig.savefig(OUT / "fig_workflow.png", facecolor="white")
+    save(fig, "fig_workflow")
     plt.close(fig)
 
 
@@ -147,7 +153,7 @@ def equal_volume():
     ax.tick_params(labelsize=8)
     ax.legend(frameon=False, fontsize=8, loc="lower right")
     fig.tight_layout()
-    fig.savefig(OUT / "fig_equal_volume.png", facecolor="white")
+    save(fig, "fig_equal_volume")
     plt.close(fig)
 
 
@@ -171,7 +177,7 @@ def solutions():
         ax.tick_params(axis="x", labelsize=8)
     axes[0].set_yticks(list(range(len(items)))[::-1], [n for n, _, _, _ in items], fontsize=8.5)
     fig.tight_layout(w_pad=1.5)
-    fig.savefig(OUT / "fig_solutions.png", facecolor="white")
+    save(fig, "fig_solutions")
     plt.close(fig)
 
 
@@ -197,7 +203,7 @@ def external():
     ax.tick_params(axis="y", labelsize=8)
     ax.legend(frameon=False, ncol=3, fontsize=8.5, loc="lower center", bbox_to_anchor=(0.5, 1.0))
     fig.tight_layout()
-    fig.savefig(OUT / "fig_external.png", facecolor="white")
+    save(fig, "fig_external")
     plt.close(fig)
 
 
@@ -239,11 +245,11 @@ def crops():
     top.save(OUT / "shot_investigate.png")
     side([crop("3_帳戶調查", (72, 1036, 500, 1300)), crop("3_帳戶調查", (72, 1308, 500, 1505))]).save(
         OUT / "shot_evidence.png")
-    crop("4_疑似集團分析", (78, 660, 922, 1262)).save(OUT / "shot_group.png")
+    crop("4_疑似集團分析", (78, 805, 922, 1407)).save(OUT / "shot_group.png")  # 上方有驗證說明框
 
 
 if __name__ == "__main__":
     architecture(); workflow(); equal_volume(); solutions(); external(); crops()
-    for p in sorted(OUT.iterdir()):
+    for p in sorted(OUT.glob("*.png")):
         w, h = Image.open(p).size
         print(f"{p.name}: {w}x{h}")

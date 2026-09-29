@@ -120,6 +120,28 @@ def test_fair_comparison_same_volume_and_ties():
     assert f["curve"]["ai"][:3] == [0.0, 1.0, 2.0]
 
 
+def test_graph_investigation():
+    from flowaudit.evaluation import graph_investigation
+    nat = pd.NaT
+    day = pd.Timestamp("2026-03-01")
+    # A、B 已警示、C 從未被警示，三者同屬真實集團 G1 並被切在疑似集團 1；E 是循環交易人頭帳戶、不在任何疑似集團
+    res = pd.DataFrame({
+        "label": [1, 1, 1, 0, 1, 0], "alert_date": [day, day, nat, nat, nat, nat],
+        "group_id": [1, 1, 1, -1, -1, -1], "fraud_group": ["G1", "G1", "G1", None, "G2", None],
+        "scheme": ["假投資", "假投資", "假投資", "", "循環交易", ""], "rule_hits": [3, 2, 1, 0, 2, 1],
+    }, index=list("ABCDEF"))
+    tx = pd.DataFrame({"src": ["A", "A", "B", "B", "CASH"], "dst": ["C", "D", "E", "F", "A"]})
+    gi = graph_investigation(res, tx)
+    g = gi["groups"]
+    assert (g["n_groups"], g["n_members"], g["member_mules"], g["single_fraud_group"]) == (1, 3, 3, 1)
+    assert (g["true_groups"], g["true_groups_covered"], g["uncovered_by_scheme"]) == (2, 1, {"循環交易": 1})
+    assert (g["never_alerted"], g["never_alerted_linked"]) == (2, 1)
+    # 下游：C、D、E、F（CASH 不算帳戶）；其中命中規則的是 C、E、F
+    assert gi["trace"]["downstream"] == {"n": 4, "mules": 2, "never_alerted": 2}
+    assert gi["trace"]["downstream_rule_hit"] == {"n": 3, "mules": 2, "never_alerted": 2, "cycle_mules": 1}
+    assert graph_investigation(res.drop(columns="fraud_group"), tx) == {}
+
+
 def test_dual_list_reserves_rule_quota():
     from flowaudit.model import dual_list
     ai = np.array([0.9, 0.8, 0.7, 0.6, 0.1, 0.05])

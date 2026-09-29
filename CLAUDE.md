@@ -35,6 +35,9 @@ python -m pytest -q                                   # 測試，改完程式一
 - `docs/報告書/`：競賽企劃書（Word、PDF，章節依簡章附件 2）。改報告書請改 `產生程式/build_report.py` 再重新產生：
   `make_assets.py`（圖表、截圖裁切）→ `build_report.py`（Word，數字讀 evaluation.json 並自動核對）→
   `finalize.ps1`（用 Word 更新目錄、移除作者等個人資訊、轉 PDF）；截圖原檔由 `capture_shots.py` 擷取
+  （`capture_shots.py readme` 另更新 `docs/screenshots/`）
+- `docs/海報/`：A1 背板海報，`make_poster.py` 用報告書的圖表產生 PDF（需 playwright 與本機 Edge）
+- `docs/競賽準備/`：評審問答題庫、攤位展示講稿、影片腳本；數字改了要一起更新
 
 ## 必須遵守的規則
 

@@ -2863,6 +2863,35 @@
       }
     }
   },
+  "graph": {
+    "groups": {
+      "n_groups": 24,
+      "n_members": 179,
+      "member_mules": 179,
+      "single_fraud_group": 24,
+      "true_groups": 20,
+      "true_groups_covered": 17,
+      "uncovered_by_scheme": {
+        "循環交易": 3
+      },
+      "never_alerted": 28,
+      "never_alerted_linked": 11
+    },
+    "trace": {
+      "base_rate": 0.01367242446407472,
+      "downstream": {
+        "n": 342,
+        "mules": 20,
+        "never_alerted": 20
+      },
+      "downstream_rule_hit": {
+        "n": 59,
+        "mules": 20,
+        "never_alerted": 20,
+        "cycle_mules": 8
+      }
+    }
+  },
   "label_scarcity": {
     "1": {
       "n_train_positive": 215,
@@ -3383,5 +3412,5 @@
       }
     }
   },
-  "elapsed_sec": 837.7
+  "elapsed_sec": 812.2
 }

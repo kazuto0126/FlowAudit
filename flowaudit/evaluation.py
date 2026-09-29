@@ -7,7 +7,8 @@
    對尚未被警示的帳戶排序、覆核前 K 名，計算抓到幾個、平均提前幾天、潛在攔阻金額
    （含調查延遲 0、1、3、7 天才凍結的敏感度分析）。
 4. 成本效益：覆核人力時數與成本 vs. 潛在攔阻金額。
-5. 誤判分析：被誤判的是哪些正常帳戶、漏掉的是哪種人頭帳戶；AI 與規則在「相同覆核量」「相同找回率」下的公平比較。
+5. 誤判分析：被誤判的是哪些正常帳戶、漏掉的是哪種人頭帳戶；AI 與規則在「相同覆核量」「相同找回率」下的公平比較；
+   資金流向圖的調查價值（疑似集團是否對應真實集團、從已警示帳戶往下游追查能找到多少未通報的人頭帳戶）。
 6. 警示資料稀少：銀行只知道一小部分警示帳戶時，模型還剩多少成效。
 7. 新手法測試：訓練時拿掉某一類詐騙，AI 能否找到；新手法累積幾個警示帳戶後模型能學會；各排序策略的取捨。
 8. 規則保底名單：AI 名單外、參與資金循環達門檻的帳戶，各門檻的名單大小與命中情形（含外部資料）。
@@ -486,6 +487,49 @@ def error_analysis(res: pd.DataFrame):
     return out
 
 
+def graph_investigation(res: pd.DataFrame, tx: pd.DataFrame) -> dict:
+    """資金流向圖在「調查」上的價值（排序之外），只用於評估，不影響模型。
+
+    1. 疑似集團：系統切出的集團成員有多少是人頭帳戶、每個集團是否只對應一個真實詐騙集團、涵蓋幾個真實集團；
+       從未被警示的人頭帳戶，有幾個和已警示帳戶被切在同一個集團（可從已知案件連結過去）。
+    2. 順藤摸瓜：從已警示帳戶沿資金往下游追一層，再篩出命中任一紅旗規則的帳戶，能找到多少尚未被通報的人頭帳戶。
+    """
+    need = {"group_id", "fraud_group", "alert_date", "scheme"}
+    if not need <= set(res.columns):
+        return {}
+    lab = res["label"].fillna(0).astype(int)
+    alerted = res["alert_date"].notna()
+    never = (lab == 1) & ~alerted
+    g = res[res["group_id"] >= 0]
+    mules = g[lab[g.index] == 1]
+    per_group = mules.groupby("group_id")["fraud_group"].nunique()
+    true_groups = res.loc[lab == 1, "fraud_group"].dropna().unique()
+    covered = set(mules["fraud_group"])
+    has_alert = g.groupby("group_id")["alert_date"].apply(lambda s: s.notna().any())
+    ng = g[never[g.index]]
+    out = {"groups": {
+        "n_groups": int(g["group_id"].nunique()), "n_members": int(len(g)), "member_mules": int(lab[g.index].sum()),
+        "single_fraud_group": int((per_group == 1).sum()),
+        "true_groups": int(len(true_groups)), "true_groups_covered": int(len(covered)),
+        "uncovered_by_scheme": res.loc[(lab == 1) & ~res["fraud_group"].isin(covered)].groupby("scheme")["fraud_group"]
+                                  .nunique().to_dict(),
+        "never_alerted": int(never.sum()),
+        "never_alerted_linked": int(ng["group_id"].map(has_alert).astype(bool).sum()),
+    }}
+    ids = set(res.index)
+    t = tx[tx["src"].isin(ids) & tx["dst"].isin(ids)]
+    down = pd.Index(t.loc[t["src"].isin(res.index[alerted]), "dst"].unique()).difference(res.index[alerted])
+    hit = down[(res.loc[down, "rule_hits"] > 0).to_numpy()]
+    cyc = res["scheme"] == "循環交易"
+    out["trace"] = {
+        "base_rate": float(lab.mean()),
+        "downstream": {"n": int(len(down)), "mules": int(lab[down].sum()), "never_alerted": int(never[down].sum())},
+        "downstream_rule_hit": {"n": int(len(hit)), "mules": int(lab[hit].sum()), "never_alerted": int(never[hit].sum()),
+                                "cycle_mules": int((cyc[hit] & (lab[hit] == 1)).sum())},
+    }
+    return out
+
+
 def _tie_blocks(score, y):
     """依分數由高到低分組（同分為一組），回傳各組帳戶數與人頭帳戶數。同分帳戶的覆核順序視為隨機，以期望值計算。"""
     g = pd.DataFrame({"s": np.asarray(score, float), "y": np.asarray(y, int)}).groupby("s").agg(
@@ -595,6 +639,14 @@ def run_evaluation(key: str, cfg: dict, quick: bool = False, stress: bool = Fals
             f"規則 {row['rules']['mules']:.0f}（{row['rules']['normal']:.0f}）｜隨機 {row['random_mules']:.1f}")
     a = fair["any_rule"]
     log(f"  命中任一規則 {a['n']:,} 個：人頭 {a['mules']}、正常 {a['normal']:,}｜AI 覆核同樣多：人頭 {a['ai_same_k']['mules']:.0f}")
+    out["graph"] = gi = graph_investigation(res, run["tx"])
+    if gi:
+        g_, tr = gi["groups"], gi["trace"]["downstream_rule_hit"]
+        log(f"  疑似集團 {g_['n_groups']} 個、{g_['n_members']} 個帳戶（人頭 {g_['member_mules']}），"
+            f"只對應單一真實集團 {g_['single_fraud_group']} 個，涵蓋真實集團 {g_['true_groups_covered']}/{g_['true_groups']}；"
+            f"從未被警示的人頭帳戶 {g_['never_alerted_linked']}/{g_['never_alerted']} 個可由同集團的已警示帳戶連結")
+        log(f"  從已警示帳戶往下游追一層並篩命中規則：{tr['n']} 個帳戶，人頭 {tr['mules']} 個"
+            f"（從未被警示 {tr['never_alerted']}、循環交易 {tr['cycle_mules']}）")
 
     if not quick:
         log("⑤ 警示資料稀少時的成效（隨機只保留部分已警示帳戶訓練）")

@@ -227,10 +227,13 @@ def page_overview():
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("整體表現")
+            # 有完整評估結果時，採用「模型評估」頁多模型比較的數字，與報告書一致
+            evm = (ev or {}).get("models", {})
+            ai_m, rl_m = evm.get("XGBoost（FlowAudit）", m["model"]), evm.get("現行規則計分", m["rules"])
             tbl = pd.DataFrame({
                 "方法": ["AI 模型", "傳統規則", "隨機抽樣"],
-                "PR-AUC": [m["model"]["pr_auc"], m["rules"]["pr_auc"], m["random_sampling"]["pr_auc"]],
-                "ROC-AUC": [m["model"]["roc_auc"], m["rules"]["roc_auc"], 0.5],
+                "PR-AUC": [ai_m["pr_auc"], rl_m["pr_auc"], m["random_sampling"]["pr_auc"]],
+                "ROC-AUC": [ai_m["roc_auc"], rl_m["roc_auc"], 0.5],
             })
             st.dataframe(tbl.style.format({"PR-AUC": "{:.3f}", "ROC-AUC": "{:.3f}"}), hide_index=True, use_container_width=True)
             if m.get("external_validation"):
@@ -502,6 +505,17 @@ def page_groups():
     c[0].metric("疑似集團數", f"{len(g):,}")
     c[1].metric("涵蓋可疑帳戶", f"{len(m):,}")
     c[2].metric("最大集團規模", f"{int(g['帳戶數'].max())} 戶")
+    ev = eval_for(current_key()) if "uploaded_run" not in st.session_state else None
+    gi = (ev or {}).get("graph")
+    if gi:
+        g_, tr = gi["groups"], gi["trace"]["downstream_rule_hit"]
+        miss = "、".join(f"{k} {v} 個" for k, v in g_["uncovered_by_scheme"].items())
+        st.info(f"**仿真資料上的驗證（實務上不會知道答案）**：{g_['n_groups']} 個疑似集團中，{g_['single_fraud_group']} 個只對應"
+                f"單一真實詐騙集團；{g_['true_groups']} 個真實集團涵蓋了 {g_['true_groups_covered']} 個"
+                f"{f'（未涵蓋：{miss}，由規則保底名單補上）' if miss else ''}。從未被警示的 {g_['never_alerted']} 個人頭帳戶中，"
+                f"{g_['never_alerted_linked']} 個和已警示帳戶在同一集團。另外，從已警示帳戶沿資金往下游追一層、再篩命中紅旗規則的帳戶，"
+                f"{tr['n']} 個帳戶中有 {tr['mules']} 個是警方尚未通報的人頭帳戶（其中 {tr['cycle_mules']} 個是 AI 不易找到的循環交易）。",
+                icon="🔎")
     ccfg = {"平均風險分數": st.column_config.NumberColumn(format="%.3f"),
             "群內資金往來": st.column_config.NumberColumn(format="%.0f")}
     if has_label:
